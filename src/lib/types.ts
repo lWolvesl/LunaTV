@@ -83,6 +83,14 @@ export interface IStorage {
   deleteSkipConfig(userName: string, source: string, id: string): Promise<void>;
   getAllSkipConfigs(userName: string): Promise<{ [key: string]: SkipConfig }>;
 
+  // 用户级设置
+  getUserSetting?(userName: string, key: string): Promise<UserSetting | null>;
+  setUserSetting?(
+    userName: string,
+    key: string,
+    setting: UserSetting
+  ): Promise<void>;
+
   // 数据迁移（旧扁平 key → Hash 结构）
   migrateData?(): Promise<void>;
 
@@ -129,4 +137,9 @@ export interface SkipConfig {
   enable: boolean; // 是否启用跳过片头片尾
   intro_time: number; // 片头时间（秒）
   outro_time: number; // 片尾时间（秒）
+}
+
+export interface UserSetting {
+  value: unknown;
+  update_time: number;
 }

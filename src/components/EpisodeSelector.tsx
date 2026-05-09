@@ -9,6 +9,11 @@ import React, {
   useState,
 } from 'react';
 
+import {
+  LunaDanmakuOptions,
+  LunaDanmakuSearchCandidate,
+  LunaDanmakuState,
+} from '@/lib/danmaku/types';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 
@@ -42,6 +47,21 @@ interface EpisodeSelectorProps {
   sourceSearchError?: string | null;
   /** 预计算的测速结果，避免重复测速 */
   precomputedVideoInfo?: Map<string, VideoInfo>;
+  danmakuOptions?: LunaDanmakuOptions;
+  danmakuState?: LunaDanmakuState;
+  danmakuManualCandidates?: LunaDanmakuSearchCandidate[];
+  danmakuManualLoading?: boolean;
+  danmakuManualError?: string | null;
+  onDanmakuOptionsChange?: (options: LunaDanmakuOptions) => void;
+  onDanmakuReload?: () => void;
+  onDanmakuSourceSave?: () => void;
+  danmakuSourceSaving?: boolean;
+  danmakuSourceMessage?: string | null;
+  onDanmakuManualSearch?: (keyword: string) => void;
+  onDanmakuManualSelect?: (
+    candidate: LunaDanmakuSearchCandidate,
+    episodeNumber: number
+  ) => void;
 }
 
 /**
@@ -61,6 +81,18 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   sourceSearchLoading = false,
   sourceSearchError = null,
   precomputedVideoInfo,
+  danmakuOptions,
+  danmakuState,
+  danmakuManualCandidates = [],
+  danmakuManualLoading = false,
+  danmakuManualError = null,
+  onDanmakuOptionsChange,
+  onDanmakuReload,
+  onDanmakuSourceSave,
+  danmakuSourceSaving = false,
+  danmakuSourceMessage = null,
+  onDanmakuManualSearch,
+  onDanmakuManualSelect,
 }) => {
   const router = useRouter();
   const pageCount = Math.ceil(totalEpisodes / episodesPerPage);
@@ -86,9 +118,11 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
     videoInfoMapRef.current = videoInfoMap;
   }, [videoInfoMap]);
 
-  // 主要的 tab 状态：'episodes' 或 'sources'
+  // 主要的 tab 状态：'episodes'、'sources' 或 'danmaku'
   // 当只有一集时默认展示 "换源"，并隐藏 "选集" 标签
-  const [activeTab, setActiveTab] = useState<'episodes' | 'sources'>(
+  const [activeTab, setActiveTab] = useState<
+    'episodes' | 'sources' | 'danmaku'
+  >(
     totalEpisodes > 1 ? 'episodes' : 'sources'
   );
 
@@ -243,6 +277,18 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
 
   // 添加鼠标悬停状态管理
   const [isCategoryHovered, setIsCategoryHovered] = useState(false);
+  const [manualDanmakuOpen, setManualDanmakuOpen] = useState(false);
+  const [danmakuSourceOpen, setDanmakuSourceOpen] = useState(false);
+  const [manualCandidateOpenKey, setManualCandidateOpenKey] = useState<
+    string | null
+  >(null);
+  const [manualDanmakuKeyword, setManualDanmakuKeyword] = useState(
+    videoTitle || ''
+  );
+
+  useEffect(() => {
+    setManualDanmakuKeyword((prev) => prev || videoTitle || '');
+  }, [videoTitle]);
 
   // 阻止页面竖向滚动
   const preventPageScroll = useCallback((e: WheelEvent) => {
@@ -342,6 +388,137 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
     [onSourceChange]
   );
 
+  const updateDanmakuOptions = useCallback(
+    (patch: Partial<LunaDanmakuOptions>) => {
+      if (!danmakuOptions) return;
+      onDanmakuOptionsChange?.({
+        ...danmakuOptions,
+        ...patch,
+      });
+    },
+    [danmakuOptions, onDanmakuOptionsChange]
+  );
+
+  const renderDanmakuStatus = () => {
+    if (!danmakuState) return '等待装载';
+    if (danmakuState.status === 'matching') return '自动匹配中';
+    if (danmakuState.status === 'loading') return '弹幕加载中';
+    if (danmakuState.status === 'ready') {
+      return `已装载 ${danmakuState.count} 条`;
+    }
+    if (danmakuState.status === 'empty') return '暂无弹幕';
+    if (danmakuState.status === 'error') return '装载失败';
+    return '等待装载';
+  };
+
+  const currentDanmakuEpisodeNumber =
+    danmakuState?.currentEpisodeNumber || value;
+  const currentDanmakuEpisodeTitle =
+    danmakuState?.currentEpisodeTitle ||
+    episodes_titles[currentDanmakuEpisodeNumber - 1];
+  const normalizeEpisodeText = (text?: string) =>
+    (text || '')
+      .replace(/【[^】]+】/g, '')
+      .replace(/\[[^\]]+\]/g, '')
+      .replace(/\s+/g, '')
+      .replace(/^(?:第)?0*(\d+)(?:集|话|話|期|ep|episode)?$/iu, '$1');
+  const isGenericEpisodeText = (text?: string, episodeNumber?: number) =>
+    Boolean(
+      text &&
+      episodeNumber &&
+      normalizeEpisodeText(text) === String(episodeNumber)
+    );
+  const isCurrentEpisodeTitleDuplicate = isGenericEpisodeText(
+    currentDanmakuEpisodeTitle,
+    currentDanmakuEpisodeNumber
+  );
+  const currentEpisodeLabel = currentDanmakuEpisodeTitle &&
+    !isCurrentEpisodeTitleDuplicate
+    ? `当前第 ${currentDanmakuEpisodeNumber} 集：${currentDanmakuEpisodeTitle}`
+    : `当前第 ${currentDanmakuEpisodeNumber} 集`;
+  const getCandidateEpisodeLabel = (
+    candidate: LunaDanmakuSearchCandidate
+  ) => {
+    if (candidate.episodeTitle) {
+      return candidate.episodeTitle;
+    }
+    return candidate.episodeId ? `EP ${candidate.episodeId}` : '未知集数';
+  };
+
+  const getDanmakuMatchName = () => {
+    const matchName = danmakuState?.matchName || '';
+    const episodeName = danmakuState?.matchEpisodeTitle || '';
+    if (matchName && episodeName && matchName.endsWith(episodeName)) {
+      return matchName.slice(0, -episodeName.length).trim();
+    }
+    return matchName || '未命名弹幕';
+  };
+  const getDanmakuMatchEpisodeLabel = () => {
+    if (
+      isGenericEpisodeText(
+        danmakuState?.matchEpisodeTitle,
+        currentDanmakuEpisodeNumber
+      )
+    ) {
+      return '';
+    }
+    return danmakuState?.matchEpisodeTitle || '';
+  };
+
+  const getCandidateEpisodeNumber = (
+    candidate: LunaDanmakuSearchCandidate
+  ) => {
+    if (candidate.episodeNumber && candidate.episodeNumber > 0) {
+      return candidate.episodeNumber;
+    }
+
+    const idNumber = Number.parseInt(candidate.episodeId, 10);
+    if (Number.isFinite(idNumber)) {
+      const computedEpisode = idNumber % 10000;
+      if (computedEpisode > 0 && computedEpisode <= totalEpisodes) {
+        return computedEpisode;
+      }
+    }
+
+    return 1;
+  };
+
+  const manualCandidateGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        key: string;
+        title: string;
+        providerName: string;
+        typeDescription?: string;
+        candidates: LunaDanmakuSearchCandidate[];
+      }
+    >();
+
+    for (const candidate of danmakuManualCandidates) {
+      const key = `${candidate.provider}-${candidate.animeId || candidate.title}`;
+      const group = groups.get(key);
+      if (group) {
+        group.candidates.push(candidate);
+      } else {
+        groups.set(key, {
+          key,
+          title: candidate.title,
+          providerName: candidate.providerName,
+          typeDescription: candidate.typeDescription,
+          candidates: [candidate],
+        });
+      }
+    }
+
+    return Array.from(groups.values()).map((group) => ({
+      ...group,
+      candidates: group.candidates.sort(
+        (a, b) => getCandidateEpisodeNumber(a) - getCandidateEpisodeNumber(b)
+      ),
+    }));
+  }, [danmakuManualCandidates, totalEpisodes]);
+
   const currentStart = currentPage * episodesPerPage + 1;
   const currentEnd = Math.min(
     currentStart + episodesPerPage - 1,
@@ -375,6 +552,17 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
           `.trim()}
         >
           换源
+        </div>
+        <div
+          onClick={() => setActiveTab('danmaku')}
+          className={`flex-1 py-3 px-6 text-center cursor-pointer transition-all duration-200 font-medium
+            ${activeTab === 'danmaku'
+              ? 'text-green-600 dark:text-green-400'
+              : 'text-gray-700 hover:text-green-600 bg-black/5 dark:bg-white/5 dark:text-gray-300 dark:hover:text-green-400 hover:bg-black/3 dark:hover:bg-white/3'
+            }
+          `.trim()}
+        >
+          弹幕
         </div>
       </div>
 
@@ -677,7 +865,559 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
             )}
         </div>
       )}
+
+      {activeTab === 'danmaku' && danmakuOptions && (
+        <div className='flex-1 overflow-y-auto pb-6 pt-4 space-y-4'>
+          <div className='rounded-lg bg-gray-200/60 dark:bg-white/10 px-3 py-3'>
+            <div className='flex items-center justify-between gap-3'>
+              <div className='min-w-0'>
+                <div className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+                  弹幕播放
+                </div>
+                <div className='text-xs text-gray-500 dark:text-gray-400 mt-1 truncate'>
+                  {renderDanmakuStatus()}
+                </div>
+                <div className='text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed'>
+                  {currentEpisodeLabel}
+                </div>
+                {(danmakuState?.matchName || danmakuState?.matchEpisodeTitle || danmakuState?.matchEpisodeId) && (
+                  <div className='text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed break-words'>
+                    弹幕：{getDanmakuMatchName()}
+                    {getDanmakuMatchEpisodeLabel() && (
+                      <>
+                        {' · '}
+                        {getDanmakuMatchEpisodeLabel()}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() =>
+                  updateDanmakuOptions({ enabled: !danmakuOptions.enabled })
+                }
+                className={`relative h-7 w-12 overflow-hidden rounded-full transition-colors flex-shrink-0 ${danmakuOptions.enabled
+                  ? 'bg-green-500'
+                  : 'bg-gray-400 dark:bg-gray-600'
+                  }`}
+                aria-label='切换弹幕播放'
+              >
+                <span
+                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${danmakuOptions.enabled
+                    ? 'left-6'
+                    : 'left-1'
+                    }`}
+                />
+              </button>
+            </div>
+            {danmakuState?.message && (
+              <div className='mt-2 text-xs text-red-500 dark:text-red-400'>
+                {danmakuState.message}
+              </div>
+            )}
+            <div className='mt-3 grid grid-cols-2 gap-2'>
+              <button
+                onClick={onDanmakuReload}
+                className='h-9 rounded-md bg-white/70 text-sm text-gray-700 hover:text-green-600 dark:bg-black/20 dark:text-gray-200 dark:hover:text-green-400 transition-colors'
+              >
+                重新匹配
+              </button>
+              <button
+                onClick={() => setManualDanmakuOpen((open) => !open)}
+                className='h-9 rounded-md bg-white/70 text-sm text-gray-700 hover:text-green-600 dark:bg-black/20 dark:text-gray-200 dark:hover:text-green-400 transition-colors'
+              >
+                手动选择
+              </button>
+            </div>
+          </div>
+
+          {manualDanmakuOpen && (
+            <div className='rounded-lg bg-gray-200/60 dark:bg-white/10 p-3 space-y-3'>
+              <div>
+                <div className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+                  手动选择弹幕
+                </div>
+                <div className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                  搜索剧集后展开结果，选择具体弹幕集
+                </div>
+              </div>
+              <div className='grid grid-cols-[1fr_auto] gap-2'>
+                <input
+                  value={manualDanmakuKeyword}
+                  onChange={(event) =>
+                    setManualDanmakuKeyword(event.target.value)
+                  }
+                  placeholder='搜索弹幕标题'
+                  className='min-w-0 rounded-md bg-white/70 dark:bg-black/20 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-green-500'
+                />
+                <button
+                  onClick={() => onDanmakuManualSearch?.(manualDanmakuKeyword)}
+                  disabled={danmakuManualLoading || !manualDanmakuKeyword.trim()}
+                  className='h-10 px-3 rounded-md bg-green-500 text-white text-sm disabled:opacity-50'
+                >
+                  {danmakuManualLoading ? '搜索中' : '搜索'}
+                </button>
+              </div>
+              {danmakuManualError && (
+                <div className='text-xs text-red-500 dark:text-red-400'>
+                  {danmakuManualError}
+                </div>
+              )}
+              {manualCandidateGroups.length > 0 && (
+                <div className='space-y-2 max-h-56 overflow-y-auto'>
+                  {manualCandidateGroups.map((group) => (
+                    <div
+                      key={group.key}
+                      className='rounded-lg bg-white/70 dark:bg-black/20'
+                    >
+                      <button
+                        onClick={() =>
+                          setManualCandidateOpenKey((openKey) =>
+                            openKey === group.key ? null : group.key
+                          )
+                        }
+                        className='w-full flex items-center justify-between gap-3 px-3 py-2 text-left'
+                      >
+                        <div className='min-w-0'>
+                          <div className='text-sm font-medium text-gray-900 dark:text-gray-100 truncate'>
+                            {group.title}
+                          </div>
+                          <div className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                            搜索结果
+                            {group.typeDescription
+                              ? ` · ${group.typeDescription}`
+                              : ''}
+                            {group.candidates.length > 0
+                              ? ` · ${group.candidates.length} 集弹幕`
+                              : ''}
+                          </div>
+                        </div>
+                        <div className='flex items-center gap-2 flex-shrink-0'>
+                          <span className='text-xs text-green-600 dark:text-green-400 font-medium'>
+                            {group.providerName}
+                          </span>
+                          <span
+                            className={`text-gray-500 dark:text-gray-400 transition-transform ${manualCandidateOpenKey === group.key ? 'rotate-90' : ''
+                              }`}
+                          >
+                            ›
+                          </span>
+                        </div>
+                      </button>
+
+                      {manualCandidateOpenKey === group.key && (
+                        <div className='border-t border-gray-300/70 dark:border-white/10 px-2 py-2 space-y-1'>
+                          {group.candidates.map((candidate) => {
+                            const episodeNumber =
+                              getCandidateEpisodeNumber(candidate);
+                            const targetTitle =
+                              episodes_titles[episodeNumber - 1];
+                            return (
+                              <button
+                                key={`${candidate.provider}-${candidate.episodeId}`}
+                                onClick={() =>
+                                  onDanmakuManualSelect?.(
+                                    candidate,
+                                    episodeNumber
+                                  )
+                                }
+                                className='w-full rounded-md px-2 py-2 text-left hover:bg-black/5 dark:hover:bg-white/10 transition-colors'
+                              >
+                                <div className='text-sm text-gray-900 dark:text-gray-100 truncate'>
+                                  第 {episodeNumber} 集
+                                  {candidate.episodeTitle
+                                    ? `：${candidate.episodeTitle}`
+                                    : ''}
+                                </div>
+                                <div className='mt-1 text-xs text-gray-500 dark:text-gray-400 truncate'>
+                                  绑定到：
+                                  {targetTitle
+                                    ? `第 ${episodeNumber} 集：${targetTitle}`
+                                    : `第 ${episodeNumber} 集`}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className='rounded-lg bg-gray-200/60 dark:bg-white/10 p-3'>
+            <button
+              onClick={() => setDanmakuSourceOpen((open) => !open)}
+              className='w-full flex items-center justify-between gap-3 text-left'
+            >
+              <div className='min-w-0'>
+                <div className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+                  弹幕源
+                </div>
+              </div>
+              <div className='flex items-center gap-2 flex-shrink-0'>
+                <span
+                  className={`text-gray-500 dark:text-gray-400 transition-transform ${danmakuSourceOpen ? 'rotate-90' : ''
+                    }`}
+                >
+                  ›
+                </span>
+              </div>
+            </button>
+
+            {danmakuSourceOpen && (
+              <div className='mt-3 space-y-3 border-t border-gray-300/70 dark:border-white/10 pt-3'>
+                  <DanmakuTextInput
+                    label='名称'
+                    value={danmakuOptions.source.custom.name}
+                    placeholder=''
+                    onChange={(value) =>
+                      updateDanmakuOptions({
+                        source: {
+                          ...danmakuOptions.source,
+                          provider: 'custom',
+                          providerOrder: ['custom'],
+                          custom: {
+                            ...danmakuOptions.source.custom,
+                            name: value,
+                          },
+                        },
+                      })
+                    }
+                  />
+                  <DanmakuTextInput
+                    label='API 地址'
+                    value={danmakuOptions.source.custom.apiBase}
+                    placeholder=''
+                    onChange={(value) =>
+                      updateDanmakuOptions({
+                        source: {
+                          ...danmakuOptions.source,
+                          provider: 'custom',
+                          providerOrder: ['custom'],
+                          custom: {
+                            ...danmakuOptions.source.custom,
+                            apiBase: value,
+                          },
+                        },
+                      })
+                    }
+                  />
+                  <DanmakuToggle
+                    label='启用身份验证'
+                    checked={danmakuOptions.source.custom.enableAuth}
+                    onChange={(checked) =>
+                      updateDanmakuOptions({
+                        source: {
+                          ...danmakuOptions.source,
+                          provider: 'custom',
+                          providerOrder: ['custom'],
+                          custom: {
+                            ...danmakuOptions.source.custom,
+                            enableAuth: checked,
+                          },
+                        },
+                      })
+                    }
+                  />
+                  {danmakuOptions.source.custom.enableAuth && (
+                    <div className='space-y-2'>
+                      <div className='text-xs text-gray-500 dark:text-gray-400'>
+                        自定义请求头
+                      </div>
+                      {danmakuOptions.source.custom.headers.map(
+                        (header, index) => (
+                          <div
+                            key={index}
+                            className='grid grid-cols-[1fr_1fr_auto] gap-2'
+                          >
+                            <input
+                              value={header.key}
+                              placeholder='Authorization'
+                              onChange={(event) => {
+                                const headers = [
+                                  ...danmakuOptions.source.custom.headers,
+                                ];
+                                headers[index] = {
+                                  ...headers[index],
+                                  key: event.target.value,
+                                };
+                                updateDanmakuOptions({
+                                  source: {
+                                    ...danmakuOptions.source,
+                                    provider: 'custom',
+                                    providerOrder: ['custom'],
+                                    custom: {
+                                      ...danmakuOptions.source.custom,
+                                      headers,
+                                    },
+                                  },
+                                });
+                              }}
+                              className='min-w-0 rounded-md bg-white/70 dark:bg-black/20 px-2 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-green-500'
+                            />
+                            <input
+                              value={header.value}
+                              placeholder=''
+                              onChange={(event) => {
+                                const headers = [
+                                  ...danmakuOptions.source.custom.headers,
+                                ];
+                                headers[index] = {
+                                  ...headers[index],
+                                  value: event.target.value,
+                                };
+                                updateDanmakuOptions({
+                                  source: {
+                                    ...danmakuOptions.source,
+                                    provider: 'custom',
+                                    providerOrder: ['custom'],
+                                    custom: {
+                                      ...danmakuOptions.source.custom,
+                                      headers,
+                                    },
+                                  },
+                                });
+                              }}
+                              className='min-w-0 rounded-md bg-white/70 dark:bg-black/20 px-2 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-green-500'
+                            />
+                            <button
+                              onClick={() => {
+                                const headers =
+                                  danmakuOptions.source.custom.headers.filter(
+                                    (_, itemIndex) => itemIndex !== index
+                                  );
+                                updateDanmakuOptions({
+                                  source: {
+                                    ...danmakuOptions.source,
+                                    provider: 'custom',
+                                    providerOrder: ['custom'],
+                                    custom: {
+                                      ...danmakuOptions.source.custom,
+                                      headers,
+                                    },
+                                  },
+                                });
+                              }}
+                              className='w-9 rounded-md bg-white/70 text-gray-600 hover:text-red-500 dark:bg-black/20 dark:text-gray-300'
+                              aria-label='删除请求头'
+                            >
+                              -
+                            </button>
+                          </div>
+                        )
+                      )}
+                      <button
+                        onClick={() =>
+                          updateDanmakuOptions({
+                            source: {
+                              ...danmakuOptions.source,
+                              provider: 'custom',
+                              providerOrder: ['custom'],
+                              custom: {
+                                ...danmakuOptions.source.custom,
+                                headers: [
+                                  ...danmakuOptions.source.custom.headers,
+                                  { key: 'Authorization', value: '' },
+                                ],
+                              },
+                            },
+                          })
+                        }
+                        className='h-9 px-3 rounded-md border border-green-500/50 text-sm text-green-600 hover:bg-green-500/10 dark:text-green-400'
+                      >
+                        添加请求头
+                      </button>
+                    </div>
+                  )}
+                  <div className='flex items-center gap-3 pt-1'>
+                    <button
+                      onClick={onDanmakuSourceSave}
+                      disabled={danmakuSourceSaving}
+                      className='h-9 px-4 rounded-md bg-green-500 text-sm text-white hover:bg-green-600 disabled:opacity-60 transition-colors'
+                    >
+                      {danmakuSourceSaving ? '保存中' : '保存'}
+                    </button>
+                    {danmakuSourceMessage && (
+                      <span className='text-xs text-gray-500 dark:text-gray-400'>
+                        {danmakuSourceMessage}
+                      </span>
+                    )}
+                  </div>
+              </div>
+            )}
+          </div>
+
+          <DanmakuSlider
+            label='不透明度'
+            value={Math.round(danmakuOptions.opacity * 100)}
+            min={10}
+            max={100}
+            suffix='%'
+            onChange={(value) => updateDanmakuOptions({ opacity: value / 100 })}
+          />
+          <DanmakuSlider
+            label='字体大小'
+            value={danmakuOptions.fontSize}
+            min={16}
+            max={40}
+            suffix='px'
+            onChange={(value) => updateDanmakuOptions({ fontSize: value })}
+          />
+          <DanmakuSlider
+            label='弹幕速度'
+            value={Math.round(danmakuOptions.speed * 100)}
+            min={50}
+            max={200}
+            suffix='%'
+            onChange={(value) => updateDanmakuOptions({ speed: value / 100 })}
+          />
+          <DanmakuSlider
+            label='显示区域'
+            value={danmakuOptions.displayArea}
+            min={25}
+            max={100}
+            suffix='%'
+            onChange={(value) => updateDanmakuOptions({ displayArea: value })}
+          />
+          <DanmakuSlider
+            label='时间偏移'
+            value={danmakuOptions.offset / 1000}
+            min={-10}
+            max={10}
+            step={0.5}
+            suffix='s'
+            onChange={(value) => updateDanmakuOptions({ offset: value * 1000 })}
+          />
+          <DanmakuSlider
+            label='最大同屏'
+            value={danmakuOptions.maxOnScreen}
+            min={50}
+            max={800}
+            step={50}
+            suffix='条'
+            onChange={(value) => updateDanmakuOptions({ maxOnScreen: value })}
+          />
+
+          <div className='space-y-2 rounded-lg bg-gray-200/60 dark:bg-white/10 p-3'>
+            <DanmakuToggle
+              label='防重'
+              checked={danmakuOptions.dedup}
+              onChange={(checked) => updateDanmakuOptions({ dedup: checked })}
+            />
+            <DanmakuToggle
+              label='屏蔽顶部弹幕'
+              checked={danmakuOptions.blockTop}
+              onChange={(checked) => updateDanmakuOptions({ blockTop: checked })}
+            />
+            <DanmakuToggle
+              label='屏蔽底部弹幕'
+              checked={danmakuOptions.blockBottom}
+              onChange={(checked) =>
+                updateDanmakuOptions({ blockBottom: checked })
+              }
+            />
+          </div>
+        </div>
+      )}
     </div>
+  );
+};
+
+const DanmakuSlider = ({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  suffix: string;
+  onChange: (value: number) => void;
+}) => {
+  return (
+    <label className='block rounded-lg bg-gray-200/60 dark:bg-white/10 p-3'>
+      <div className='flex items-center justify-between text-sm mb-2'>
+        <span className='font-medium text-gray-800 dark:text-gray-100'>
+          {label}
+        </span>
+        <span className='text-gray-500 dark:text-gray-400'>
+          {value}
+          {suffix}
+        </span>
+      </div>
+      <input
+        type='range'
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className='w-full accent-green-500'
+      />
+    </label>
+  );
+};
+
+const DanmakuTextInput = ({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) => {
+  return (
+    <label className='block'>
+      <div className='text-xs text-gray-500 dark:text-gray-400 mb-1'>
+        {label}
+      </div>
+      <input
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className='w-full rounded-md bg-white/70 dark:bg-black/20 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-green-500'
+      />
+    </label>
+  );
+};
+
+const DanmakuToggle = ({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) => {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className='w-full flex items-center justify-between gap-3 py-1.5 text-sm text-gray-800 dark:text-gray-100'
+    >
+      <span>{label}</span>
+      <span
+        className={`relative h-6 w-10 overflow-hidden rounded-full transition-colors ${checked ? 'bg-green-500' : 'bg-gray-400 dark:bg-gray-600'
+          }`}
+      >
+        <span
+          className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-all ${checked ? 'left-5' : 'left-1'
+            }`}
+        />
+      </span>
+    </button>
   );
 };
 

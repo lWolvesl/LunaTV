@@ -3,7 +3,7 @@
 import { AdminConfig } from './admin.types';
 import { KvrocksStorage } from './kvrocks.db';
 import { RedisStorage } from './redis.db';
-import { Favorite, IStorage, PlayRecord, SkipConfig } from './types';
+import { Favorite, IStorage, PlayRecord, SkipConfig, UserSetting } from './types';
 import { UpstashRedisStorage } from './upstash.db';
 
 // storage type 常量: 'localstorage' | 'redis' | 'upstash'，默认 'localstorage'
@@ -259,6 +259,27 @@ export class DbManager {
       return (this.storage as any).getAllSkipConfigs(userName);
     }
     return {};
+  }
+
+  // ---------- 用户级设置 ----------
+  async getUserSetting(
+    userName: string,
+    key: string
+  ): Promise<UserSetting | null> {
+    if (typeof (this.storage as any).getUserSetting === 'function') {
+      return (this.storage as any).getUserSetting(userName, key);
+    }
+    return null;
+  }
+
+  async setUserSetting(
+    userName: string,
+    key: string,
+    setting: UserSetting
+  ): Promise<void> {
+    if (typeof (this.storage as any).setUserSetting === 'function') {
+      await (this.storage as any).setUserSetting(userName, key, setting);
+    }
   }
 
   // ---------- 数据清理 ----------

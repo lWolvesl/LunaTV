@@ -21,6 +21,23 @@ import {
   saveSkipConfig,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import { LunaDanmakuController } from '@/lib/danmaku/controller';
+import {
+  loadLunaDanmakuOptions,
+  mergeLunaDanmakuOptions,
+  saveLunaDanmakuOptions,
+} from '@/lib/danmaku/options';
+import {
+  loadDanmakuMapping,
+  saveDanmakuMapping,
+} from '@/lib/danmaku/mapping';
+import {
+  LunaDanmakuCommentsResponse,
+  LunaDanmakuContext,
+  LunaDanmakuSearchCandidate,
+  LunaDanmakuOptions,
+  LunaDanmakuState,
+} from '@/lib/danmaku/types';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 
@@ -195,6 +212,28 @@ function PlayPageClient() {
   const [videoLoadingStage, setVideoLoadingStage] = useState<
     'initing' | 'sourceChanging'
   >('initing');
+  const [danmakuOptions, setDanmakuOptions] =
+    useState<LunaDanmakuOptions>(loadLunaDanmakuOptions);
+  const danmakuOptionsRef = useRef(danmakuOptions);
+  const [danmakuState, setDanmakuState] = useState<LunaDanmakuState>({
+    status: 'idle',
+    count: 0,
+  });
+  const [danmakuManualCandidates, setDanmakuManualCandidates] = useState<
+    LunaDanmakuSearchCandidate[]
+  >([]);
+  const [danmakuManualLoading, setDanmakuManualLoading] = useState(false);
+  const [danmakuManualError, setDanmakuManualError] = useState<string | null>(
+    null
+  );
+  const [danmakuSourceSaving, setDanmakuSourceSaving] = useState(false);
+  const [danmakuSourceMessage, setDanmakuSourceMessage] = useState<
+    string | null
+  >(null);
+  const danmakuControllerRef = useRef<LunaDanmakuController | null>(null);
+  const danmakuCommentsRef = useRef<LunaDanmakuCommentsResponse>({
+    comments: [],
+  });
 
   // 播放进度保存相关
   const saveIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -472,8 +511,229 @@ function PlayPageClient() {
     }
   };
 
+  const buildDanmakuContext = (
+    episodeIndex = currentEpisodeIndexRef.current
+  ): LunaDanmakuContext => ({
+    title: videoTitleRef.current,
+    searchTitle,
+    year: videoYearRef.current,
+    type: searchType,
+    source: currentSourceRef.current,
+    sourceId: currentIdRef.current,
+    sourceName: detailRef.current?.source_name,
+    episodeIndex,
+    episodeTitle: detailRef.current?.episodes_titles?.[episodeIndex],
+    totalEpisodes: detailRef.current?.episodes?.length || 1,
+    doubanId: detailRef.current?.douban_id || videoDoubanId,
+    poster: detailRef.current?.poster || videoCover,
+  });
+
+  const applyDanmakuToPlayer = (
+    response: LunaDanmakuCommentsResponse = danmakuCommentsRef.current
+  ) => {
+    const player = artPlayerRef.current;
+    if (!player?.video || !artRef.current) return;
+
+    if (!danmakuControllerRef.current) {
+      danmakuControllerRef.current = new LunaDanmakuController();
+    }
+
+    danmakuControllerRef.current.create({
+      container: artRef.current,
+      video: player.video as HTMLVideoElement,
+      comments: response.comments,
+      options: danmakuOptionsRef.current,
+    });
+  };
+
+  const loadDanmakuForCurrentEpisode = async () => {
+    const context = buildDanmakuContext();
+    if (!context.title && !context.searchTitle) return;
+
+    setDanmakuState({
+      status: 'matching',
+      count: 0,
+      currentEpisodeNumber: context.episodeIndex + 1,
+      currentEpisodeTitle: context.episodeTitle,
+    });
+    danmakuCommentsRef.current = { comments: [] };
+    danmakuControllerRef.current?.reload([], danmakuOptionsRef.current);
+
+    try {
+      const manualMapping = loadDanmakuMapping(context);
+      let candidate: LunaDanmakuSearchCandidate | undefined = manualMapping || undefined;
+      let requestSource = danmakuOptionsRef.current.source;
+      if (manualMapping?.source) {
+        requestSource = manualMapping.source;
+      }
+
+      if (!candidate) {
+        const searchResponse = await fetch('/api/danmaku/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context,
+          source: danmakuOptionsRef.current.source,
+        }),
+        });
+        if (!searchResponse.ok) {
+          throw new Error('弹幕匹配失败');
+        }
+        const searchData = await searchResponse.json();
+        candidate = searchData.candidates?.[0];
+      }
+
+      if (!candidate) {
+        danmakuCommentsRef.current = { comments: [] };
+        danmakuControllerRef.current?.reload([], danmakuOptionsRef.current);
+        setDanmakuState({
+          status: 'empty',
+          count: 0,
+          currentEpisodeNumber: context.episodeIndex + 1,
+          currentEpisodeTitle: context.episodeTitle,
+          message: '当前第三方接口没有匹配到候选，可检查接口配置或手动选择弹幕。',
+        });
+        return;
+      }
+
+      setDanmakuState({
+        status: 'loading',
+        count: 0,
+        sourceName: candidate.providerName,
+        matchName: candidate.title,
+        currentEpisodeNumber: context.episodeIndex + 1,
+        currentEpisodeTitle: context.episodeTitle,
+        matchEpisodeId: candidate.episodeId,
+        matchEpisodeTitle: candidate.episodeTitle,
+      });
+      const commentsResponse = await fetch('/api/danmaku/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context,
+          source: requestSource,
+          candidate,
+        }),
+      });
+      if (!commentsResponse.ok) {
+        throw new Error('弹幕加载失败');
+      }
+
+      const commentsData =
+        (await commentsResponse.json()) as LunaDanmakuCommentsResponse;
+      danmakuCommentsRef.current = commentsData;
+      applyDanmakuToPlayer(commentsData);
+      setDanmakuState({
+        status: commentsData.comments.length > 0 ? 'ready' : 'empty',
+        count: commentsData.comments.length,
+        sourceName: commentsData.sourceName || candidate.providerName,
+        matchName: commentsData.matchName || candidate.title,
+        currentEpisodeNumber: context.episodeIndex + 1,
+        currentEpisodeTitle: context.episodeTitle,
+        matchEpisodeId: candidate.episodeId,
+        matchEpisodeTitle: candidate.episodeTitle,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '弹幕装载失败';
+      danmakuCommentsRef.current = { comments: [] };
+      danmakuControllerRef.current?.reload([], danmakuOptionsRef.current);
+      setDanmakuState({
+        status: 'error',
+        count: 0,
+        currentEpisodeNumber: context.episodeIndex + 1,
+        currentEpisodeTitle: context.episodeTitle,
+        message,
+      });
+    }
+  };
+
+  const handleDanmakuOptionsChange = (options: LunaDanmakuOptions) => {
+    setDanmakuOptions(options);
+    danmakuOptionsRef.current = options;
+    saveLunaDanmakuOptions(options);
+    danmakuControllerRef.current?.updateOptions(options);
+  };
+
+  const handleDanmakuSourceSave = async () => {
+    setDanmakuSourceSaving(true);
+    setDanmakuSourceMessage(null);
+    try {
+      const response = await fetch('/api/danmaku/options', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: danmakuOptionsRef.current.source }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || '保存弹幕源失败');
+      }
+      setDanmakuSourceMessage('已保存');
+    } catch (err) {
+      setDanmakuSourceMessage(
+        err instanceof Error ? err.message : '保存弹幕源失败'
+      );
+    } finally {
+      setDanmakuSourceSaving(false);
+    }
+  };
+
+  const handleDanmakuManualSearch = async (keyword: string) => {
+    const context = {
+      ...buildDanmakuContext(),
+      title: keyword,
+      searchTitle: keyword,
+    };
+
+    setDanmakuManualLoading(true);
+    setDanmakuManualError(null);
+
+    try {
+      const response = await fetch('/api/danmaku/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context,
+          source: danmakuOptionsRef.current.source,
+          includeAllEpisodes: true,
+        }),
+      });
+      if (!response.ok) throw new Error('搜索弹幕候选失败');
+      const data = await response.json();
+      setDanmakuManualCandidates(data.candidates || []);
+      if (!data.candidates || data.candidates.length === 0) {
+        setDanmakuManualError('没有找到候选，可换一个关键词试试');
+      }
+    } catch (err) {
+      setDanmakuManualCandidates([]);
+      setDanmakuManualError(
+        err instanceof Error ? err.message : '搜索弹幕候选失败'
+      );
+    } finally {
+      setDanmakuManualLoading(false);
+    }
+  };
+
+  const handleDanmakuManualSelect = async (
+    candidate: LunaDanmakuSearchCandidate,
+    episodeNumber: number
+  ) => {
+    const episodeIndex = Math.max(0, episodeNumber - 1);
+    const context = buildDanmakuContext(episodeIndex);
+    saveDanmakuMapping(context, {
+      ...candidate,
+      source: danmakuOptionsRef.current.source,
+      savedAt: Date.now(),
+    });
+    setDanmakuManualCandidates([]);
+    if (episodeIndex === currentEpisodeIndexRef.current) {
+      await loadDanmakuForCurrentEpisode();
+    }
+  };
+
   // 清理播放器资源的统一函数
   const cleanupPlayer = () => {
+    danmakuControllerRef.current?.destroy();
+    danmakuControllerRef.current = null;
     if (artPlayerRef.current) {
       try {
         // 销毁 HLS 实例
@@ -1492,6 +1752,7 @@ function PlayPageClient() {
       // 监听播放器事件
       artPlayerRef.current.on('ready', () => {
         setError(null);
+        applyDanmakuToPlayer();
 
         // 播放器就绪后，如果正在播放则请求 Wake Lock
         if (artPlayerRef.current && !artPlayerRef.current.paused) {
@@ -1647,12 +1908,66 @@ function PlayPageClient() {
           artPlayerRef.current.video as HTMLVideoElement,
           videoUrl
         );
+        applyDanmakuToPlayer();
       }
     } catch (err) {
       console.error('创建播放器失败:', err);
       setError('播放器初始化失败');
     }
   }, [Artplayer, Hls, videoUrl, loading, blockAdEnabled]);
+
+  useEffect(() => {
+    danmakuOptionsRef.current = danmakuOptions;
+    danmakuControllerRef.current?.updateOptions(danmakuOptions);
+  }, [danmakuOptions]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadServerDanmakuSource = async () => {
+      try {
+        const response = await fetch('/api/danmaku/options', {
+          cache: 'no-store',
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!data?.source || cancelled) return;
+
+        setDanmakuOptions((prev) => {
+          const next = mergeLunaDanmakuOptions({
+            ...prev,
+            source: data.source,
+          });
+          danmakuOptionsRef.current = next;
+          saveLunaDanmakuOptions(next);
+          danmakuControllerRef.current?.updateOptions(next);
+          return next;
+        });
+      } catch {
+        // 本地配置仍可继续使用
+      }
+    };
+
+    loadServerDanmakuSource();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loading || !detail || !videoUrl) return;
+    loadDanmakuForCurrentEpisode();
+  }, [
+    loading,
+    detail,
+    videoUrl,
+    currentEpisodeIndex,
+    currentSource,
+    currentId,
+    videoTitle,
+    videoYear,
+  ]);
 
   // 当组件卸载时清理定时器、Wake Lock 和播放器资源
   useEffect(() => {
@@ -1959,6 +2274,18 @@ function PlayPageClient() {
                 sourceSearchLoading={sourceSearchLoading}
                 sourceSearchError={sourceSearchError}
                 precomputedVideoInfo={precomputedVideoInfo}
+                danmakuOptions={danmakuOptions}
+                danmakuState={danmakuState}
+                danmakuManualCandidates={danmakuManualCandidates}
+                danmakuManualLoading={danmakuManualLoading}
+                danmakuManualError={danmakuManualError}
+                onDanmakuOptionsChange={handleDanmakuOptionsChange}
+                onDanmakuReload={loadDanmakuForCurrentEpisode}
+                onDanmakuSourceSave={handleDanmakuSourceSave}
+                danmakuSourceSaving={danmakuSourceSaving}
+                danmakuSourceMessage={danmakuSourceMessage}
+                onDanmakuManualSearch={handleDanmakuManualSearch}
+                onDanmakuManualSelect={handleDanmakuManualSelect}
               />
             </div>
           </div>

@@ -4,7 +4,7 @@ import { Redis } from '@upstash/redis';
 
 import { AdminConfig } from './admin.types';
 import { hashPassword, isHashed, verifyPassword } from './password';
-import { Favorite, IStorage, PlayRecord, SkipConfig } from './types';
+import { Favorite, IStorage, PlayRecord, SkipConfig, UserSetting } from './types';
 
 // 搜索历史最大条数
 const SEARCH_HISTORY_LIMIT = 20;
@@ -332,6 +332,33 @@ export class UpstashRedisStorage implements IStorage {
       }
     }
     return configs;
+  }
+
+  // ---------- 用户级设置 ----------
+  private userSettingsHashKey(user: string) {
+    return `u:${user}:settings`;
+  }
+
+  async getUserSetting(
+    userName: string,
+    key: string
+  ): Promise<UserSetting | null> {
+    const val = await withRetry(() =>
+      this.client.hget(this.userSettingsHashKey(userName), key)
+    );
+    return val ? (val as UserSetting) : null;
+  }
+
+  async setUserSetting(
+    userName: string,
+    key: string,
+    setting: UserSetting
+  ): Promise<void> {
+    await withRetry(() =>
+      this.client.hset(this.userSettingsHashKey(userName), {
+        [key]: setting,
+      })
+    );
   }
 
   // ---------- 数据迁移：旧扁平 key → Hash 结构 ----------

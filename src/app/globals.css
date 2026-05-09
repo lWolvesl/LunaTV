@@ -160,6 +160,92 @@ div[data-media-provider] video {
   background-color: #000 !important; /* 其余区域填充为黑色 */
 }
 
+.luna-danmaku-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  display: block;
+  overflow: hidden;
+  pointer-events: none;
+  contain: layout paint;
+  opacity: 0.72;
+  --luna-danmaku-font-size: 25px;
+  --luna-danmaku-area: 80%;
+  --luna-danmaku-width: 100%;
+}
+
+.luna-danmaku-item {
+  position: absolute;
+  left: 0;
+  max-width: 70%;
+  white-space: nowrap;
+  font-size: var(--luna-danmaku-font-size);
+  font-weight: 600;
+  line-height: 1.15;
+  text-shadow:
+    1px 0 1px #000,
+    0 1px 1px #000,
+    -1px 0 1px #000,
+    0 -1px 1px #000;
+  will-change: transform;
+}
+
+.luna-danmaku-rtl {
+  animation-name: luna-danmaku-rtl;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.luna-danmaku-ltr {
+  animation-name: luna-danmaku-ltr;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.luna-danmaku-top,
+.luna-danmaku-bottom {
+  left: 50%;
+  animation-name: luna-danmaku-fixed;
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+}
+
+.luna-danmaku-bottom {
+  top: auto !important;
+  bottom: calc(100% - var(--luna-danmaku-area));
+}
+
+@keyframes luna-danmaku-rtl {
+  from {
+    transform: translateX(var(--luna-danmaku-width));
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes luna-danmaku-ltr {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(var(--luna-danmaku-width));
+  }
+}
+
+@keyframes luna-danmaku-fixed {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translateX(-50%);
+  }
+  10%,
+  90% {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+}
+
 /* 隐藏移动端竖屏时的 pip 按钮 */
 @media (max-width: 768px) {
   .art-control-pip {
