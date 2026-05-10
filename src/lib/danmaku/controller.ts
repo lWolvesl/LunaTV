@@ -131,8 +131,6 @@ export class LunaDanmakuController {
         `${this.host.clientWidth}px`
       );
     }
-    this.clear();
-    this.seekTo(this.video?.currentTime || 0);
   }
 
   private bindVideo(video: HTMLVideoElement) {
@@ -148,6 +146,7 @@ export class LunaDanmakuController {
     add('playing', () => this.play());
     add('pause', () => this.stop());
     add('waiting', () => this.stop());
+    add('ratechange', () => this.syncAnimationPlaybackRate());
     add('seeking', () => {
       this.clear();
       this.seekTo(video.currentTime || 0);
@@ -165,6 +164,7 @@ export class LunaDanmakuController {
 
   private play() {
     if (!this.options?.enabled || !this.video || !this.host) return;
+    this.resumeAnimations();
     if (this.raf) return;
     const tick = () => {
       this.emitDueComments();
@@ -175,6 +175,7 @@ export class LunaDanmakuController {
   }
 
   private stop() {
+    this.pauseAnimations();
     if (!this.raf) return;
     window.cancelAnimationFrame(this.raf);
     this.raf = 0;
@@ -204,12 +205,14 @@ export class LunaDanmakuController {
     if (!this.video || !this.host || !this.options?.enabled) return;
     const adjustedTime = this.video.currentTime - this.options.offset / 1000;
     const now = performance.now();
+    const playbackRate = this.getPlaybackRate();
+    const minInterval = this.options.interval / playbackRate;
 
     while (
       this.cursor < this.comments.length &&
       this.comments[this.cursor].time <= adjustedTime
     ) {
-      if (now - this.lastEmitAt < this.options.interval) return;
+      if (now - this.lastEmitAt < minInterval) return;
 
       const comment = this.comments[this.cursor];
       this.cursor += 1;
@@ -238,6 +241,7 @@ export class LunaDanmakuController {
     el.style.top = `${top}px`;
 
     this.host.appendChild(el);
+    this.syncNodeAnimation(el);
     this.activeNodes.push({
       el,
       track,
@@ -263,6 +267,15 @@ export class LunaDanmakuController {
   private pruneNodes() {
     const now = performance.now();
     this.activeNodes = this.activeNodes.filter((node) => {
+      const animations = node.el.getAnimations();
+      if (
+        animations.length > 0 &&
+        animations.every((animation) => animation.playState === 'finished')
+      ) {
+        node.el.remove();
+        return false;
+      }
+
       if (now - node.startedAt < node.duration + 500) return true;
       node.el.remove();
       return false;
@@ -296,5 +309,45 @@ export class LunaDanmakuController {
         return true;
       })
       .sort((a, b) => a.time - b.time);
+  }
+
+  private getPlaybackRate() {
+    const rate = this.video?.playbackRate || 1;
+    return Number.isFinite(rate) && rate > 0 ? rate : 1;
+  }
+
+  private syncAnimationPlaybackRate() {
+    const playbackRate = this.getPlaybackRate();
+    for (const node of this.activeNodes) {
+      for (const animation of node.el.getAnimations()) {
+        animation.playbackRate = playbackRate;
+      }
+    }
+  }
+
+  private pauseAnimations() {
+    for (const node of this.activeNodes) {
+      for (const animation of node.el.getAnimations()) {
+        animation.pause();
+      }
+    }
+  }
+
+  private resumeAnimations() {
+    for (const node of this.activeNodes) {
+      this.syncNodeAnimation(node.el);
+    }
+  }
+
+  private syncNodeAnimation(el: HTMLDivElement) {
+    const playbackRate = this.getPlaybackRate();
+    for (const animation of el.getAnimations()) {
+      animation.playbackRate = playbackRate;
+      if (this.video?.paused) {
+        animation.pause();
+      } else {
+        animation.play();
+      }
+    }
   }
 }

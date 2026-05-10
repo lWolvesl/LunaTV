@@ -241,6 +241,11 @@ function PlayPageClient() {
 
   const artPlayerRef = useRef<any>(null);
   const artRef = useRef<HTMLDivElement | null>(null);
+  const webFullscreenPlaceholderRef = useRef<HTMLDivElement | null>(null);
+  const webFullscreenStyleRef = useRef<{
+    container: string;
+    player: string;
+  } | null>(null);
 
   // Wake Lock 相关
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -364,15 +369,6 @@ function PlayPageClient() {
     // 按综合评分排序，选择最佳播放源
     resultsWithScore.sort((a, b) => b.score - a.score);
 
-    console.log('播放源评分排序结果:');
-    resultsWithScore.forEach((result, index) => {
-      console.log(
-        `${index + 1}. ${result.source.source_name
-        } - 评分: ${result.score.toFixed(2)} (${result.testResult.quality}, ${result.testResult.loadSpeed
-        }, ${result.testResult.pingTime}ms)`
-      );
-    });
-
     return resultsWithScore[0].source;
   };
 
@@ -483,6 +479,183 @@ function PlayPageClient() {
     if (video.hasAttribute('disableRemotePlayback')) {
       video.removeAttribute('disableRemotePlayback');
     }
+
+    video.playsInline = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('webkit-playsinline', 'true');
+    video.setAttribute('x5-playsinline', 'true');
+    video.setAttribute('x5-video-player-type', 'h5-page');
+    video.setAttribute('x5-video-player-fullscreen', 'false');
+  };
+
+  const syncDanmakuViewport = () => {
+    window.setTimeout(() => {
+      const webFullscreenHeight =
+        window.visualViewport?.height || window.innerHeight;
+      const player = artPlayerRef.current?.template?.$player as
+        | HTMLElement
+        | undefined;
+      const fullscreenElement =
+        document.fullscreenElement ||
+        ((document as any).webkitFullscreenElement as Element | null);
+      const isNativeFullscreen = fullscreenElement === artRef.current;
+      const isWebFullscreen =
+        !!artRef.current?.classList.contains('luna-art-web-fullscreen');
+      artRef.current?.style.setProperty(
+        '--luna-web-fullscreen-height',
+        `${webFullscreenHeight}px`
+      );
+      if (isWebFullscreen && artRef.current) {
+        artRef.current.style.height = `${webFullscreenHeight}px`;
+      }
+      player?.classList.toggle(
+        'art-fullscreen',
+        isNativeFullscreen || isWebFullscreen
+      );
+      player?.classList.toggle('art-fullscreen-web', isWebFullscreen);
+      artRef.current?.classList.toggle(
+        'luna-art-native-fullscreen',
+        isNativeFullscreen
+      );
+      document.body.classList.toggle(
+        'luna-art-fullscreen-lock',
+        isWebFullscreen
+      );
+      document.documentElement.classList.toggle(
+        'luna-art-fullscreen-lock',
+        isWebFullscreen
+      );
+      danmakuControllerRef.current?.resize();
+    }, 120);
+  };
+
+  const setLunaWebFullscreen = (enabled: boolean) => {
+    const container = artRef.current;
+    if (!container) return;
+    const player = artPlayerRef.current?.template?.$player as
+      | HTMLElement
+      | undefined;
+
+    if (enabled) {
+      window.scrollTo({ top: 0 });
+      if (!webFullscreenStyleRef.current) {
+        webFullscreenStyleRef.current = {
+          container: container.getAttribute('style') || '',
+          player: player?.getAttribute('style') || '',
+        };
+      }
+
+      if (!webFullscreenPlaceholderRef.current && container.parentElement) {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'luna-art-web-fullscreen-placeholder';
+        placeholder.style.width = `${container.offsetWidth}px`;
+        placeholder.style.height = `${container.offsetHeight}px`;
+        container.parentElement.insertBefore(placeholder, container);
+        webFullscreenPlaceholderRef.current = placeholder;
+        document.body.appendChild(container);
+      }
+
+      const viewportHeight =
+        window.visualViewport?.height || window.innerHeight;
+      container.classList.add('luna-art-web-fullscreen');
+      Object.assign(container.style, {
+        position: 'fixed',
+        inset: '0',
+        top: '0',
+        left: '0',
+        zIndex: '9999',
+        width: '100vw',
+        height: `${viewportHeight}px`,
+        maxWidth: 'none',
+        maxHeight: 'none',
+        margin: '0',
+        borderRadius: '0',
+        overflow: 'hidden',
+        background: '#000',
+        transform: 'none',
+      });
+
+      player?.classList.add('art-fullscreen', 'art-fullscreen-web');
+      if (player) {
+        Object.assign(player.style, {
+          width: '100%',
+          height: '100%',
+          borderRadius: '0',
+          transform: 'none',
+        });
+      }
+    } else {
+      container.classList.remove('luna-art-web-fullscreen');
+      const placeholder = webFullscreenPlaceholderRef.current;
+      if (placeholder?.parentElement) {
+        placeholder.parentElement.insertBefore(container, placeholder);
+        placeholder.remove();
+      }
+      webFullscreenPlaceholderRef.current = null;
+      if (webFullscreenStyleRef.current) {
+        container.setAttribute('style', webFullscreenStyleRef.current.container);
+        if (player) {
+          player.setAttribute('style', webFullscreenStyleRef.current.player);
+        }
+        webFullscreenStyleRef.current = null;
+      }
+      player?.classList.remove('art-fullscreen', 'art-fullscreen-web');
+    }
+
+    document.body.classList.toggle('luna-art-fullscreen-lock', enabled);
+    document.documentElement.classList.toggle('luna-art-fullscreen-lock', enabled);
+    syncDanmakuViewport();
+    window.setTimeout(syncDanmakuViewport, 350);
+  };
+
+  const toggleLunaWebFullscreen = () => {
+    setLunaWebFullscreen(
+      !artRef.current?.classList.contains('luna-art-web-fullscreen')
+    );
+  };
+
+  const toggleLunaNativeFullscreen = async () => {
+    const container = artRef.current;
+    if (!container) return;
+
+    const isMobileLike =
+      typeof window !== 'undefined' &&
+      (window.matchMedia('(max-width: 768px)').matches ||
+        /iPad|iPhone|iPod|Android|Mobile/i.test(navigator.userAgent));
+
+    if (isMobileLike) {
+      toggleLunaWebFullscreen();
+      return;
+    }
+
+    const fullscreenElement =
+      document.fullscreenElement ||
+      ((document as any).webkitFullscreenElement as Element | null);
+
+    try {
+      if (fullscreenElement === container) {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          await (document as any).webkitExitFullscreen();
+        }
+        container.classList.remove('luna-art-native-fullscreen');
+        return;
+      }
+
+      setLunaWebFullscreen(false);
+      if (container.requestFullscreen) {
+        await container.requestFullscreen();
+      } else if ((container as any).webkitRequestFullscreen) {
+        await (container as any).webkitRequestFullscreen();
+      } else {
+        setLunaWebFullscreen(true);
+      }
+    } catch {
+      setLunaWebFullscreen(true);
+    } finally {
+      syncDanmakuViewport();
+    }
   };
 
   // Wake Lock 相关函数
@@ -492,10 +665,9 @@ function PlayPageClient() {
         wakeLockRef.current = await (navigator as any).wakeLock.request(
           'screen'
         );
-        console.log('Wake Lock 已启用');
       }
     } catch (err) {
-      console.warn('Wake Lock 请求失败:', err);
+      void err;
     }
   };
 
@@ -504,10 +676,9 @@ function PlayPageClient() {
       if (wakeLockRef.current) {
         await wakeLockRef.current.release();
         wakeLockRef.current = null;
-        console.log('Wake Lock 已释放');
       }
     } catch (err) {
-      console.warn('Wake Lock 释放失败:', err);
+      void err;
     }
   };
 
@@ -745,9 +916,8 @@ function PlayPageClient() {
         artPlayerRef.current.destroy();
         artPlayerRef.current = null;
 
-        console.log('播放器资源已清理');
       } catch (err) {
-        console.warn('清理播放器资源时出错:', err);
+        void err;
         artPlayerRef.current = null;
       }
     }
@@ -849,7 +1019,6 @@ function PlayPageClient() {
           newConfig
         );
       }
-      console.log('跳过片头片尾配置已保存:', newConfig);
     } catch (err) {
       console.error('保存跳过片头片尾配置失败:', err);
     }
@@ -1024,8 +1193,6 @@ function PlayPageClient() {
         detailData = await preferBestSource(sourcesInfo);
       }
 
-      console.log(detailData.source, detailData.id);
-
       setNeedPrefer(false);
       setCurrentSource(detailData.source);
       setCurrentId(detailData.id);
@@ -1122,8 +1289,6 @@ function PlayPageClient() {
 
       // 记录当前播放进度（仅在同一集数切换时恢复）
       const currentPlayTime = artPlayerRef.current?.currentTime || 0;
-      console.log('换源前当前播放时间:', currentPlayTime);
-
       // 清除前一个历史记录
       if (currentSourceRef.current && currentIdRef.current) {
         try {
@@ -1131,7 +1296,6 @@ function PlayPageClient() {
             currentSourceRef.current,
             currentIdRef.current
           );
-          console.log('已清除前一个播放记录');
         } catch (err) {
           console.error('清除播放记录失败:', err);
         }
@@ -1324,10 +1488,8 @@ function PlayPageClient() {
 
     // f 键 = 切换全屏
     if (e.key === 'f' || e.key === 'F') {
-      if (artPlayerRef.current) {
-        artPlayerRef.current.fullscreen = !artPlayerRef.current.fullscreen;
-        e.preventDefault();
-      }
+      toggleLunaNativeFullscreen();
+      e.preventDefault();
     }
   };
 
@@ -1370,12 +1532,6 @@ function PlayPageClient() {
       });
 
       lastSaveTimeRef.current = Date.now();
-      console.log('播放进度已保存:', {
-        title: videoTitleRef.current,
-        episode: currentEpisodeIndexRef.current + 1,
-        year: detailRef.current?.year,
-        progress: `${Math.floor(currentTime)}/${Math.floor(duration)}`,
-      });
     } catch (err) {
       console.error('保存播放进度失败:', err);
     }
@@ -1514,12 +1670,14 @@ function PlayPageClient() {
       setError('视频地址无效');
       return;
     }
-    console.log(videoUrl);
-
     // 检测是否为WebKit浏览器
     const isWebkit =
       typeof window !== 'undefined' &&
       typeof (window as any).webkitConvertPointFromNodeToPage === 'function';
+    const isIOSLike =
+      typeof navigator !== 'undefined' &&
+      (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
     // 非WebKit浏览器且播放器已存在，使用switch方法切换
     if (!isWebkit && artPlayerRef.current) {
@@ -1545,7 +1703,7 @@ function PlayPageClient() {
       // 创建新的播放器实例
       Artplayer.PLAYBACK_RATE = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
       Artplayer.USE_RAF = false;
-      Artplayer.FULLSCREEN_WEB_IN_BODY = true;
+      Artplayer.FULLSCREEN_WEB_IN_BODY = false;
 
       artPlayerRef.current = new Artplayer({
         container: artRef.current,
@@ -1564,8 +1722,8 @@ function PlayPageClient() {
         flip: false,
         playbackRate: true,
         aspectRatio: false,
-        fullscreen: true,
-        fullscreenWeb: true,
+        fullscreen: false,
+        fullscreenWeb: false,
         subtitleOffset: false,
         miniProgressBar: false,
         mutex: true,
@@ -1580,6 +1738,7 @@ function PlayPageClient() {
         lock: true,
         moreVideoAttr: {
           crossOrigin: 'anonymous',
+          playsInline: true,
         },
         // HLS 支持配置
         customType: {
@@ -1619,15 +1778,12 @@ function PlayPageClient() {
               if (data.fatal) {
                 switch (data.type) {
                   case Hls.ErrorTypes.NETWORK_ERROR:
-                    console.log('网络错误，尝试恢复...');
                     hls.startLoad();
                     break;
                   case Hls.ErrorTypes.MEDIA_ERROR:
-                    console.log('媒体错误，尝试恢复...');
                     hls.recoverMediaError();
                     break;
                   default:
-                    console.log('无法恢复的错误');
                     hls.destroy();
                     break;
                 }
@@ -1746,12 +1902,36 @@ function PlayPageClient() {
               handleNextEpisode();
             },
           },
+          {
+            name: 'lunaFullscreenWeb',
+            position: 'right',
+            index: 60,
+            html: '<i class="art-icon flex"><svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M4 4h6v2H7.4l3.3 3.3-1.4 1.4L6 7.4V10H4V4Zm8 0h6v6h-2V7.4l-3.3 3.3-1.4-1.4L14.6 6H12V4ZM4 12h2v2.6l3.3-3.3 1.4 1.4L7.4 16H10v2H4v-6Zm12 0h2v6h-6v-2h2.6l-3.3-3.3 1.4-1.4 3.3 3.3V12Z" fill="currentColor"/></svg></i>',
+            tooltip: '网页全屏',
+            click: function () {
+              toggleLunaWebFullscreen();
+            },
+          },
+          {
+            name: 'lunaFullscreen',
+            position: 'right',
+            index: 70,
+            html: '<i class="art-icon flex"><svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M4 4h6v2H6v4H4V4Zm8 0h6v6h-2V6h-4V4ZM4 12h2v4h4v2H4v-6Zm12 0h2v6h-6v-2h4v-4Z" fill="currentColor"/></svg></i>',
+            tooltip: '全屏',
+            click: function () {
+              toggleLunaNativeFullscreen();
+            },
+          },
         ],
       });
 
       // 监听播放器事件
       artPlayerRef.current.on('ready', () => {
         setError(null);
+        ensureVideoSource(
+          artPlayerRef.current?.video as HTMLVideoElement,
+          videoUrl
+        );
         applyDanmakuToPlayer();
 
         // 播放器就绪后，如果正在播放则请求 Wake Lock
@@ -1797,9 +1977,8 @@ function PlayPageClient() {
               target = Math.max(0, duration - 5);
             }
             artPlayerRef.current.currentTime = target;
-            console.log('成功恢复播放进度到:', resumeTimeRef.current);
           } catch (err) {
-            console.warn('恢复播放进度失败:', err);
+            void err;
           }
         }
         resumeTimeRef.current = null;
@@ -1920,6 +2099,27 @@ function PlayPageClient() {
     danmakuOptionsRef.current = danmakuOptions;
     danmakuControllerRef.current?.updateOptions(danmakuOptions);
   }, [danmakuOptions]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => syncDanmakuViewport();
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    window.addEventListener('resize', handleFullscreenChange);
+    window.addEventListener('orientationchange', handleFullscreenChange);
+
+    return () => {
+      setLunaWebFullscreen(false);
+      artRef.current?.classList.remove('luna-art-native-fullscreen');
+      document.documentElement.classList.remove('luna-art-fullscreen-lock');
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener(
+        'webkitfullscreenchange',
+        handleFullscreenChange
+      );
+      window.removeEventListener('resize', handleFullscreenChange);
+      window.removeEventListener('orientationchange', handleFullscreenChange);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
