@@ -495,9 +495,7 @@ function PlayPageClient() {
       const player = artPlayerRef.current?.template?.$player as
         | HTMLElement
         | undefined;
-      const fullscreenElement =
-        document.fullscreenElement ||
-        ((document as any).webkitFullscreenElement as Element | null);
+      const fullscreenElement = getFullscreenElement();
       const isNativeFullscreen = fullscreenElement === artRef.current;
       const isWebFullscreen =
         !!artRef.current?.classList.contains('luna-art-web-fullscreen');
@@ -527,6 +525,37 @@ function PlayPageClient() {
       );
       danmakuControllerRef.current?.resize();
     }, 120);
+  };
+
+  const getFullscreenElement = () =>
+    document.fullscreenElement ||
+    ((document as any).webkitFullscreenElement as Element | null);
+
+  const requestNativeFullscreen = async (container: HTMLElement) => {
+    const requestFullscreen = container.requestFullscreen as
+      | ((options?: FullscreenOptions) => Promise<void>)
+      | undefined;
+    const webkitRequestFullscreen = (container as any)
+      .webkitRequestFullscreen as (() => Promise<void> | void) | undefined;
+
+    if (requestFullscreen) {
+      // Chrome on Android honors navigationUI when the request comes from a tap.
+      try {
+        await requestFullscreen.call(container, { navigationUI: 'hide' });
+        return true;
+      } catch {
+        // Some WebKit implementations expose the method but reject options.
+        await requestFullscreen.call(container);
+        return true;
+      }
+    }
+
+    if (webkitRequestFullscreen) {
+      await webkitRequestFullscreen.call(container);
+      return true;
+    }
+
+    return false;
   };
 
   const setLunaWebFullscreen = (enabled: boolean) => {
@@ -617,20 +646,7 @@ function PlayPageClient() {
   const toggleLunaNativeFullscreen = async () => {
     const container = artRef.current;
     if (!container) return;
-
-    const isMobileLike =
-      typeof window !== 'undefined' &&
-      (window.matchMedia('(max-width: 768px)').matches ||
-        /iPad|iPhone|iPod|Android|Mobile/i.test(navigator.userAgent));
-
-    if (isMobileLike) {
-      toggleLunaWebFullscreen();
-      return;
-    }
-
-    const fullscreenElement =
-      document.fullscreenElement ||
-      ((document as any).webkitFullscreenElement as Element | null);
+    const fullscreenElement = getFullscreenElement();
 
     try {
       if (fullscreenElement === container) {
@@ -644,11 +660,8 @@ function PlayPageClient() {
       }
 
       setLunaWebFullscreen(false);
-      if (container.requestFullscreen) {
-        await container.requestFullscreen();
-      } else if ((container as any).webkitRequestFullscreen) {
-        await (container as any).webkitRequestFullscreen();
-      } else {
+      const enteredFullscreen = await requestNativeFullscreen(container);
+      if (!enteredFullscreen) {
         setLunaWebFullscreen(true);
       }
     } catch {
@@ -703,14 +716,19 @@ function PlayPageClient() {
     response: LunaDanmakuCommentsResponse = danmakuCommentsRef.current
   ) => {
     const player = artPlayerRef.current;
-    if (!player?.video || !artRef.current) return;
+    const danmakuContainer = player?.template?.$danmuku as
+      | HTMLElement
+      | undefined;
+    if (!player?.video || !danmakuContainer) return;
 
     if (!danmakuControllerRef.current) {
       danmakuControllerRef.current = new LunaDanmakuController();
     }
 
     danmakuControllerRef.current.create({
-      container: artRef.current,
+      // ArtPlayer keeps this layer within the video stacking context, including
+      // when its outer container enters the browser's native fullscreen mode.
+      container: danmakuContainer,
       video: player.video as HTMLVideoElement,
       comments: response.comments,
       options: danmakuOptionsRef.current,
@@ -2102,10 +2120,13 @@ function PlayPageClient() {
 
   useEffect(() => {
     const handleFullscreenChange = () => syncDanmakuViewport();
+    const viewport = window.visualViewport;
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     window.addEventListener('resize', handleFullscreenChange);
     window.addEventListener('orientationchange', handleFullscreenChange);
+    viewport?.addEventListener('resize', handleFullscreenChange);
+    viewport?.addEventListener('scroll', handleFullscreenChange);
 
     return () => {
       setLunaWebFullscreen(false);
@@ -2118,6 +2139,8 @@ function PlayPageClient() {
       );
       window.removeEventListener('resize', handleFullscreenChange);
       window.removeEventListener('orientationchange', handleFullscreenChange);
+      viewport?.removeEventListener('resize', handleFullscreenChange);
+      viewport?.removeEventListener('scroll', handleFullscreenChange);
     };
   }, []);
 
