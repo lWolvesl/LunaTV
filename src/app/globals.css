@@ -174,6 +174,102 @@ div[data-media-provider] video {
   --luna-danmaku-width: 100%;
 }
 
+.art-video-player .art-layer-lunaDanmakuSettingsPanel {
+  position: absolute;
+  right: 12px;
+  bottom: calc(var(--art-control-height) + var(--art-bottom-gap) + 18px);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.luna-danmaku-settings-panel {
+  width: min(250px, calc(100vw - 24px));
+  max-height: var(--art-settings-max-height);
+  overflow-y: auto;
+  color: var(--art-font-color);
+  background-color: var(--art-widget-background);
+  border-radius: var(--art-border-radius);
+  pointer-events: auto;
+}
+
+.luna-danmaku-settings-panel[hidden] {
+  display: none;
+}
+
+.luna-danmaku-settings-title {
+  display: flex;
+  align-items: center;
+  height: 35px;
+  padding: 0 5px;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+}
+
+.luna-danmaku-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 35px;
+  padding: 0 5px;
+  cursor: pointer;
+  transition: background-color var(--art-transition-duration) ease;
+}
+
+.luna-danmaku-setting-row:hover,
+.luna-danmaku-setting-flags label:hover {
+  background-color: rgb(255 255 255 / 10%);
+}
+
+.luna-danmaku-setting-row > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 1;
+}
+
+.luna-danmaku-setting-row output {
+  color: rgb(255 255 255 / 50%);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.luna-danmaku-setting-row input[type='range'] {
+  width: 80px;
+  height: 3px;
+  margin-left: 10px;
+  accent-color: var(--art-theme);
+  appearance: none;
+  background-color: rgb(255 255 255 / 20%);
+}
+
+.luna-danmaku-setting-switch {
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+}
+
+.luna-danmaku-setting-switch input,
+.luna-danmaku-setting-flags input {
+  width: 18px;
+  height: 18px;
+  accent-color: #22c55e;
+}
+
+.luna-danmaku-setting-flags {
+  display: flex;
+  align-items: center;
+  min-height: 35px;
+  font-size: 12px;
+}
+
+.luna-danmaku-setting-flags label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 35px;
+  padding: 0 8px;
+  cursor: pointer;
+  transition: background-color var(--art-transition-duration) ease;
+}
+
 .luna-art-web-fullscreen,
 .luna-art-native-fullscreen {
   position: fixed !important;
@@ -311,5 +407,10 @@ div[data-media-provider] video {
 
   .art-control-volume {
     display: none !important;
+  }
+
+  .art-video-player .art-layer-lunaDanmakuSettingsPanel {
+    right: 8px;
+    bottom: calc(var(--art-control-height) + var(--art-bottom-gap) + 10px);
   }
 }

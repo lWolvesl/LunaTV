@@ -8,9 +8,7 @@ import { LunaDanmakuOptions } from '@/lib/danmaku/types';
 
 export const runtime = 'nodejs';
 
-const DANMAKU_SOURCE_SETTING_KEY = 'danmaku:source';
-
-async function getAuthorizedUsername(request: NextRequest) {
+async function getAuthorizedUsername(request: NextRequest, requireAdmin = false) {
   const authInfo = getAuthInfoFromCookie(request);
   if (!authInfo?.username) return null;
 
@@ -19,7 +17,9 @@ async function getAuthorizedUsername(request: NextRequest) {
     const user = config.UserConfig.Users.find(
       (item) => item.username === authInfo.username
     );
-    if (!user || user.banned) return null;
+    if (!user || user.banned || (requireAdmin && user.role !== 'admin')) {
+      return null;
+    }
   }
 
   return authInfo.username;
@@ -32,11 +32,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const setting = await db.getUserSetting(username, DANMAKU_SOURCE_SETTING_KEY);
-    return NextResponse.json(
-      { source: (setting?.value as LunaDanmakuOptions['source']) || null },
-      { status: 200 }
-    );
+    const config = await getConfig();
+    return NextResponse.json({ source: config.DanmakuSource }, { status: 200 });
   } catch (err) {
     return NextResponse.json(
       {
@@ -50,18 +47,15 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const username = await getAuthorizedUsername(request);
-    if (!username) {
+    if (!(await getAuthorizedUsername(request, true))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const body = (await request.json()) as Partial<LunaDanmakuOptions>;
     const options = mergeLunaDanmakuOptions(body);
-
-    await db.setUserSetting(username, DANMAKU_SOURCE_SETTING_KEY, {
-      value: options.source,
-      update_time: Date.now(),
-    });
+    const config = await getConfig();
+    config.DanmakuSource = options.source;
+    await db.saveAdminConfig(config);
 
     return NextResponse.json({ success: true, source: options.source }, { status: 200 });
   } catch (err) {

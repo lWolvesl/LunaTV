@@ -279,6 +279,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   const [isCategoryHovered, setIsCategoryHovered] = useState(false);
   const [manualDanmakuOpen, setManualDanmakuOpen] = useState(false);
   const [danmakuSourceOpen, setDanmakuSourceOpen] = useState(false);
+  const [showLegacyDanmakuOptions] = useState(false);
   const [manualCandidateOpenKey, setManualCandidateOpenKey] = useState<
     string | null
   >(null);
@@ -892,23 +893,6 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                   </div>
                 )}
               </div>
-              <button
-                onClick={() =>
-                  updateDanmakuOptions({ enabled: !danmakuOptions.enabled })
-                }
-                className={`relative h-7 w-12 overflow-hidden rounded-full transition-colors flex-shrink-0 ${danmakuOptions.enabled
-                  ? 'bg-green-500'
-                  : 'bg-gray-400 dark:bg-gray-600'
-                  }`}
-                aria-label='切换弹幕播放'
-              >
-                <span
-                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${danmakuOptions.enabled
-                    ? 'left-6'
-                    : 'left-1'
-                    }`}
-                />
-              </button>
             </div>
             {danmakuState?.message && (
               <div className='mt-2 text-xs text-red-500 dark:text-red-400'>
@@ -1047,6 +1031,8 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
             </div>
           )}
 
+          {showLegacyDanmakuOptions && danmakuOptions && (
+            <>
           <div className='rounded-lg bg-gray-200/60 dark:bg-white/10 p-3'>
             <button
               onClick={() => setDanmakuSourceOpen((open) => !open)}
@@ -1320,6 +1306,8 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
               }
             />
           </div>
+            </>
+          )}
         </div>
       )}
     </div>

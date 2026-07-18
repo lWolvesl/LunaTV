@@ -1,3 +1,5 @@
+import type { LunaDanmakuSourceOptions } from './danmaku/types';
+
 export interface AdminConfig {
   ConfigSubscribtion: {
     URL: string;
@@ -56,6 +58,7 @@ export interface AdminConfig {
     channelNumber?: number;
     disabled?: boolean;
   }[];
+  DanmakuSource: LunaDanmakuSourceOptions;
 }
 
 export interface AdminConfigResult {

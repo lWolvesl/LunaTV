@@ -1717,6 +1717,51 @@ function PlayPageClient() {
       cleanupPlayer();
     }
 
+    let danmakuSettingsPanel: HTMLElement | null = null;
+
+    const syncDanmakuSettingsPanel = () => {
+      if (!danmakuSettingsPanel) return;
+      const options = danmakuOptionsRef.current;
+      const enabled = danmakuSettingsPanel.querySelector<HTMLInputElement>(
+        '[data-danmaku-option="enabled"]'
+      );
+      const blockTop = danmakuSettingsPanel.querySelector<HTMLInputElement>(
+        '[data-danmaku-option="blockTop"]'
+      );
+      const blockBottom = danmakuSettingsPanel.querySelector<HTMLInputElement>(
+        '[data-danmaku-option="blockBottom"]'
+      );
+      if (enabled) enabled.checked = options.enabled;
+      if (blockTop) blockTop.checked = options.blockTop;
+      if (blockBottom) blockBottom.checked = options.blockBottom;
+
+      const values: Record<string, number> = {
+        opacity: Math.round(options.opacity * 100),
+        fontSize: options.fontSize,
+        speed: Math.round(options.speed * 100),
+        displayArea: options.displayArea,
+      };
+      Object.entries(values).forEach(([name, value]) => {
+        const input = danmakuSettingsPanel?.querySelector<HTMLInputElement>(
+          `[data-danmaku-option="${name}"]`
+        );
+        const output = danmakuSettingsPanel?.querySelector<HTMLOutputElement>(
+          `[data-danmaku-value="${name}"]`
+        );
+        if (input) input.value = String(value);
+        if (output) {
+          output.value = `${value}${name === 'fontSize' ? 'px' : '%'}`;
+          output.textContent = output.value;
+        }
+      });
+    };
+
+    const toggleDanmakuSettingsPanel = () => {
+      if (!danmakuSettingsPanel) return;
+      danmakuSettingsPanel.hidden = !danmakuSettingsPanel.hidden;
+      if (!danmakuSettingsPanel.hidden) syncDanmakuSettingsPanel();
+    };
+
     try {
       // 创建新的播放器实例
       Artplayer.PLAYBACK_RATE = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -1931,6 +1976,19 @@ function PlayPageClient() {
             },
           },
           {
+            name: 'lunaDanmakuSettings',
+            position: 'right',
+            index: 50,
+            html: '<i class="art-icon flex"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 13.5v-7Zm4 3h8v2H8v-2Zm0 3.5h5v2H8v-2Z" fill="currentColor"/></svg></i>',
+            tooltip: '弹幕设置',
+            mounted(element: HTMLElement) {
+              element.dataset.lunaDanmakuSettingsTrigger = 'true';
+            },
+            click: function () {
+              toggleDanmakuSettingsPanel();
+            },
+          },
+          {
             name: 'lunaFullscreen',
             position: 'right',
             index: 70,
@@ -1941,6 +1999,68 @@ function PlayPageClient() {
             },
           },
         ],
+      });
+
+      artPlayerRef.current.layers.add({
+        name: 'lunaDanmakuSettingsPanel',
+        html: `
+          <div class="luna-danmaku-settings-panel" hidden role="dialog" aria-label="弹幕设置">
+            <div class="luna-danmaku-settings-title">弹幕设置</div>
+            <label class="luna-danmaku-setting-row luna-danmaku-setting-switch">
+              <span>显示弹幕</span><input data-danmaku-option="enabled" type="checkbox">
+            </label>
+            <label class="luna-danmaku-setting-row"><span>透明度 <output data-danmaku-value="opacity"></output></span><input data-danmaku-option="opacity" type="range" min="10" max="100" step="1"></label>
+            <label class="luna-danmaku-setting-row"><span>弹幕大小 <output data-danmaku-value="fontSize"></output></span><input data-danmaku-option="fontSize" type="range" min="16" max="40" step="1"></label>
+            <label class="luna-danmaku-setting-row"><span>弹幕速度 <output data-danmaku-value="speed"></output></span><input data-danmaku-option="speed" type="range" min="50" max="200" step="1"></label>
+            <label class="luna-danmaku-setting-row"><span>显示区域 <output data-danmaku-value="displayArea"></output></span><input data-danmaku-option="displayArea" type="range" min="25" max="100" step="1"></label>
+            <div class="luna-danmaku-setting-flags">
+              <label><input data-danmaku-option="blockTop" type="checkbox">屏蔽顶部</label>
+              <label><input data-danmaku-option="blockBottom" type="checkbox">屏蔽底部</label>
+            </div>
+          </div>`,
+        mounted(element: HTMLElement) {
+          danmakuSettingsPanel = element.querySelector(
+            '.luna-danmaku-settings-panel'
+          );
+          danmakuSettingsPanel?.addEventListener('click', (event) => {
+            event.stopPropagation();
+          });
+          artPlayerRef.current?.template?.$player.addEventListener(
+            'click',
+            (event: MouseEvent) => {
+              const target = event.target as HTMLElement | null;
+              const panel = danmakuSettingsPanel;
+              if (
+                !target ||
+                !panel ||
+                panel.hidden ||
+                panel.contains(target) ||
+                target.closest('[data-luna-danmaku-settings-trigger]')
+              ) {
+                return;
+              }
+              panel.hidden = true;
+            }
+          );
+          danmakuSettingsPanel?.addEventListener('input', (event) => {
+            const input = event.target as HTMLInputElement;
+            const name = input.dataset.danmakuOption;
+            if (!name) return;
+
+            const current = danmakuOptionsRef.current;
+            const patch: Partial<LunaDanmakuOptions> = {};
+            if (name === 'enabled' || name === 'blockTop' || name === 'blockBottom') {
+              patch[name] = input.checked;
+            } else if (name === 'opacity' || name === 'speed') {
+              patch[name] = Number(input.value) / 100;
+            } else if (name === 'fontSize' || name === 'displayArea') {
+              patch[name] = Number(input.value);
+            }
+            handleDanmakuOptionsChange({ ...current, ...patch });
+            syncDanmakuSettingsPanel();
+          });
+          syncDanmakuSettingsPanel();
+        },
       });
 
       // 监听播放器事件

@@ -43,6 +43,7 @@ import { createPortal } from 'react-dom';
 
 import { AdminConfig, AdminConfigResult } from '@/lib/admin.types';
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
+import type { LunaDanmakuSourceOptions } from '@/lib/danmaku/types';
 
 import DataMigration from '@/components/DataMigration';
 import PageLayout from '@/components/PageLayout';
@@ -3973,6 +3974,164 @@ const SiteConfigComponent = ({ config, refreshConfig }: { config: AdminConfig | 
   );
 };
 
+const DanmakuSourceConfig = ({
+  config,
+  refreshConfig,
+}: {
+  config: AdminConfig | null;
+  refreshConfig: () => Promise<void>;
+}) => {
+  const [source, setSource] = useState<LunaDanmakuSourceOptions | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (config?.DanmakuSource) setSource(config.DanmakuSource);
+  }, [config]);
+
+  const updateSource = (patch: Partial<LunaDanmakuSourceOptions['custom']>) => {
+    setSource((current) =>
+      current
+        ? {
+            ...current,
+            provider: 'custom',
+            providerOrder: ['custom'],
+            custom: { ...current.custom, ...patch },
+          }
+        : current
+    );
+  };
+
+  const save = async () => {
+    if (!source) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/danmaku/options', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || '保存弹幕源失败');
+      setMessage('已保存');
+      await refreshConfig();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '保存弹幕源失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!source) return null;
+
+  return (
+    <div className='space-y-5'>
+      <div className='grid gap-4 md:grid-cols-2'>
+        <label className='space-y-2'>
+          <span className='text-sm font-medium text-gray-800 dark:text-gray-100'>
+            名称
+          </span>
+          <input
+            value={source.custom.name}
+            onChange={(event) => updateSource({ name: event.target.value })}
+            className='h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100'
+          />
+        </label>
+        <label className='space-y-2'>
+          <span className='text-sm font-medium text-gray-800 dark:text-gray-100'>
+            API 地址
+          </span>
+          <input
+            type='url'
+            value={source.custom.apiBase}
+            onChange={(event) => updateSource({ apiBase: event.target.value })}
+            className='h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100'
+          />
+        </label>
+      </div>
+
+      <label className='flex min-h-11 items-center justify-between gap-4 rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700'>
+        <span className='text-sm font-medium text-gray-800 dark:text-gray-100'>
+          启用身份验证
+        </span>
+        <input
+          type='checkbox'
+          checked={source.custom.enableAuth}
+          onChange={(event) => updateSource({ enableAuth: event.target.checked })}
+          className='h-5 w-5 accent-green-600'
+        />
+      </label>
+
+      {source.custom.enableAuth && (
+        <div className='space-y-3'>
+          <div className='text-sm font-medium text-gray-800 dark:text-gray-100'>
+            自定义请求头
+          </div>
+          {source.custom.headers.map((header, index) => (
+            <div key={index} className='grid gap-2 sm:grid-cols-[1fr_1fr_auto]'>
+              <input
+                value={header.key}
+                placeholder='Authorization'
+                onChange={(event) => {
+                  const headers = [...source.custom.headers];
+                  headers[index] = { ...headers[index], key: event.target.value };
+                  updateSource({ headers });
+                }}
+                className='h-10 min-w-0 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100'
+              />
+              <input
+                value={header.value}
+                placeholder='值'
+                onChange={(event) => {
+                  const headers = [...source.custom.headers];
+                  headers[index] = { ...headers[index], value: event.target.value };
+                  updateSource({ headers });
+                }}
+                className='h-10 min-w-0 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100'
+              />
+              <button
+                type='button'
+                onClick={() =>
+                  updateSource({
+                    headers: source.custom.headers.filter((_, itemIndex) => itemIndex !== index),
+                  })
+                }
+                className={`h-10 ${buttonStyles.dangerSmall}`}
+              >
+                删除
+              </button>
+            </div>
+          ))}
+          <button
+            type='button'
+            onClick={() =>
+              updateSource({
+                headers: [...source.custom.headers, { key: 'Authorization', value: '' }],
+              })
+            }
+            className={buttonStyles.secondarySmall}
+          >
+            添加请求头
+          </button>
+        </div>
+      )}
+
+      <div className='flex items-center justify-end gap-3'>
+        {message && <span className='text-sm text-gray-500 dark:text-gray-400'>{message}</span>}
+        <button
+          type='button'
+          onClick={save}
+          disabled={saving}
+          className={saving ? buttonStyles.disabled : buttonStyles.success}
+        >
+          {saving ? '保存中...' : '保存'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // 直播源配置组件
 const LiveSourceConfig = ({
   config,
@@ -4537,6 +4696,7 @@ function AdminPageClient() {
   const [expandedTabs, setExpandedTabs] = useState<{ [key: string]: boolean }>({
     userConfig: false,
     videoSource: false,
+    danmakuSource: false,
     liveSource: false,
     siteConfig: false,
     categoryConfig: false,
@@ -4713,6 +4873,17 @@ function AdminPageClient() {
               onToggle={() => toggleTab('videoSource')}
             >
               <VideoSourceConfig config={config} refreshConfig={fetchConfig} />
+            </CollapsibleTab>
+
+            <CollapsibleTab
+              title='弹幕源配置'
+              icon={
+                <Settings size={20} className='text-gray-600 dark:text-gray-400' />
+              }
+              isExpanded={expandedTabs.danmakuSource}
+              onToggle={() => toggleTab('danmakuSource')}
+            >
+              <DanmakuSourceConfig config={config} refreshConfig={fetchConfig} />
             </CollapsibleTab>
 
             {/* 直播源配置标签 */}

@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, no-console, @typescript-eslint/no-non-null-assertion */
 
 import { db } from '@/lib/db';
+import {
+  defaultLunaDanmakuOptions,
+  mergeLunaDanmakuOptions,
+} from '@/lib/danmaku/options';
 
 import { AdminConfig } from './admin.types';
 
@@ -226,6 +230,7 @@ async function getInitConfig(configFile: string, subConfig: {
     SourceConfig: [],
     CustomCategories: [],
     LiveConfig: [],
+    DanmakuSource: defaultLunaDanmakuOptions.source,
   };
 
   // 补充用户信息
@@ -331,6 +336,9 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   if (!adminConfig.LiveConfig || !Array.isArray(adminConfig.LiveConfig)) {
     adminConfig.LiveConfig = [];
   }
+  adminConfig.DanmakuSource = mergeLunaDanmakuOptions({
+    source: adminConfig.DanmakuSource,
+  }).source;
 
   // 站长变更自检
   const ownerUser = process.env.USERNAME;
