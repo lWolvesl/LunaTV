@@ -122,9 +122,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   // 当只有一集时默认展示 "换源"，并隐藏 "选集" 标签
   const [activeTab, setActiveTab] = useState<
     'episodes' | 'sources' | 'danmaku'
-  >(
-    totalEpisodes > 1 ? 'episodes' : 'sources'
-  );
+  >(totalEpisodes > 1 ? 'episodes' : 'sources');
 
   // 当前分页索引（0 开始）
   const initialPage = Math.floor((value - 1) / episodesPerPage);
@@ -224,6 +222,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
 
   // 当切换到换源tab并且有源数据时，异步获取视频信息 - 移除 attemptedSources 依赖避免循环触发
   useEffect(() => {
+    let cancelled = false;
     const fetchVideoInfosInBatches = async () => {
       if (
         !optimizationEnabled || // 若关闭测速则直接退出
@@ -240,15 +239,19 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
 
       if (pendingSources.length === 0) return;
 
-      const batchSize = Math.ceil(pendingSources.length / 2);
+      const batchSize = 2;
 
       for (let start = 0; start < pendingSources.length; start += batchSize) {
+        if (cancelled) return;
         const batch = pendingSources.slice(start, start + batchSize);
         await Promise.all(batch.map(getVideoInfo));
       }
     };
 
     fetchVideoInfosInBatches();
+    return () => {
+      cancelled = true;
+    };
     // 依赖项保持与之前一致
   }, [activeTab, availableSources, getVideoInfo, optimizationEnabled]);
 
@@ -292,27 +295,33 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   }, [videoTitle]);
 
   // 阻止页面竖向滚动
-  const preventPageScroll = useCallback((e: WheelEvent) => {
-    if (isCategoryHovered) {
-      e.preventDefault();
-    }
-  }, [isCategoryHovered]);
+  const preventPageScroll = useCallback(
+    (e: WheelEvent) => {
+      if (isCategoryHovered) {
+        e.preventDefault();
+      }
+    },
+    [isCategoryHovered]
+  );
 
   // 处理滚轮事件，实现横向滚动
-  const handleWheel = useCallback((e: WheelEvent) => {
-    if (isCategoryHovered && categoryContainerRef.current) {
-      e.preventDefault(); // 阻止默认的竖向滚动
+  const handleWheel = useCallback(
+    (e: WheelEvent) => {
+      if (isCategoryHovered && categoryContainerRef.current) {
+        e.preventDefault(); // 阻止默认的竖向滚动
 
-      const container = categoryContainerRef.current;
-      const scrollAmount = e.deltaY * 2; // 调整滚动速度
+        const container = categoryContainerRef.current;
+        const scrollAmount = e.deltaY * 2; // 调整滚动速度
 
-      // 根据滚轮方向进行横向滚动
-      container.scrollBy({
-        left: scrollAmount,
-        behavior: 'smooth'
-      });
-    }
-  }, [isCategoryHovered]);
+        // 根据滚轮方向进行横向滚动
+        container.scrollBy({
+          left: scrollAmount,
+          behavior: 'smooth',
+        });
+      }
+    },
+    [isCategoryHovered]
+  );
 
   // 添加全局wheel事件监听器
   useEffect(() => {
@@ -426,26 +435,17 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   const isGenericEpisodeText = (text?: string, episodeNumber?: number) =>
     Boolean(
       text &&
-      episodeNumber &&
-      normalizeEpisodeText(text) === String(episodeNumber)
+        episodeNumber &&
+        normalizeEpisodeText(text) === String(episodeNumber)
     );
   const isCurrentEpisodeTitleDuplicate = isGenericEpisodeText(
     currentDanmakuEpisodeTitle,
     currentDanmakuEpisodeNumber
   );
-  const currentEpisodeLabel = currentDanmakuEpisodeTitle &&
-    !isCurrentEpisodeTitleDuplicate
-    ? `当前第 ${currentDanmakuEpisodeNumber} 集：${currentDanmakuEpisodeTitle}`
-    : `当前第 ${currentDanmakuEpisodeNumber} 集`;
-  const getCandidateEpisodeLabel = (
-    candidate: LunaDanmakuSearchCandidate
-  ) => {
-    if (candidate.episodeTitle) {
-      return candidate.episodeTitle;
-    }
-    return candidate.episodeId ? `EP ${candidate.episodeId}` : '未知集数';
-  };
-
+  const currentEpisodeLabel =
+    currentDanmakuEpisodeTitle && !isCurrentEpisodeTitleDuplicate
+      ? `当前第 ${currentDanmakuEpisodeNumber} 集：${currentDanmakuEpisodeTitle}`
+      : `当前第 ${currentDanmakuEpisodeNumber} 集`;
   const getDanmakuMatchName = () => {
     const matchName = danmakuState?.matchName || '';
     const episodeName = danmakuState?.matchEpisodeTitle || '';
@@ -466,23 +466,24 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
     return danmakuState?.matchEpisodeTitle || '';
   };
 
-  const getCandidateEpisodeNumber = (
-    candidate: LunaDanmakuSearchCandidate
-  ) => {
-    if (candidate.episodeNumber && candidate.episodeNumber > 0) {
-      return candidate.episodeNumber;
-    }
-
-    const idNumber = Number.parseInt(candidate.episodeId, 10);
-    if (Number.isFinite(idNumber)) {
-      const computedEpisode = idNumber % 10000;
-      if (computedEpisode > 0 && computedEpisode <= totalEpisodes) {
-        return computedEpisode;
+  const getCandidateEpisodeNumber = useCallback(
+    (candidate: LunaDanmakuSearchCandidate) => {
+      if (candidate.episodeNumber && candidate.episodeNumber > 0) {
+        return candidate.episodeNumber;
       }
-    }
 
-    return 1;
-  };
+      const idNumber = Number.parseInt(candidate.episodeId, 10);
+      if (Number.isFinite(idNumber)) {
+        const computedEpisode = idNumber % 10000;
+        if (computedEpisode > 0 && computedEpisode <= totalEpisodes) {
+          return computedEpisode;
+        }
+      }
+
+      return 1;
+    },
+    [totalEpisodes]
+  );
 
   const manualCandidateGroups = useMemo(() => {
     const groups = new Map<
@@ -497,7 +498,9 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
     >();
 
     for (const candidate of danmakuManualCandidates) {
-      const key = `${candidate.provider}-${candidate.animeId || candidate.title}`;
+      const key = `${candidate.provider}-${
+        candidate.animeId || candidate.title
+      }`;
       const group = groups.get(key);
       if (group) {
         group.candidates.push(candidate);
@@ -518,7 +521,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
         (a, b) => getCandidateEpisodeNumber(a) - getCandidateEpisodeNumber(b)
       ),
     }));
-  }, [danmakuManualCandidates, totalEpisodes]);
+  }, [danmakuManualCandidates, getCandidateEpisodeNumber]);
 
   const currentStart = currentPage * episodesPerPage + 1;
   const currentEnd = Math.min(
@@ -534,9 +537,10 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
           <div
             onClick={() => setActiveTab('episodes')}
             className={`flex-1 py-3 px-6 text-center cursor-pointer transition-all duration-200 font-medium
-              ${activeTab === 'episodes'
-                ? 'text-green-600 dark:text-green-400'
-                : 'text-gray-700 hover:text-green-600 bg-black/5 dark:bg-white/5 dark:text-gray-300 dark:hover:text-green-400 hover:bg-black/3 dark:hover:bg-white/3'
+              ${
+                activeTab === 'episodes'
+                  ? 'text-green-600 dark:text-green-400'
+                  : 'text-gray-700 hover:text-green-600 bg-black/5 dark:bg-white/5 dark:text-gray-300 dark:hover:text-green-400 hover:bg-black/3 dark:hover:bg-white/3'
               }
             `.trim()}
           >
@@ -546,9 +550,10 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
         <div
           onClick={handleSourceTabClick}
           className={`flex-1 py-3 px-6 text-center cursor-pointer transition-all duration-200 font-medium
-            ${activeTab === 'sources'
-              ? 'text-green-600 dark:text-green-400'
-              : 'text-gray-700 hover:text-green-600 bg-black/5 dark:bg-white/5 dark:text-gray-300 dark:hover:text-green-400 hover:bg-black/3 dark:hover:bg-white/3'
+            ${
+              activeTab === 'sources'
+                ? 'text-green-600 dark:text-green-400'
+                : 'text-gray-700 hover:text-green-600 bg-black/5 dark:bg-white/5 dark:text-gray-300 dark:hover:text-green-400 hover:bg-black/3 dark:hover:bg-white/3'
             }
           `.trim()}
         >
@@ -557,9 +562,10 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
         <div
           onClick={() => setActiveTab('danmaku')}
           className={`flex-1 py-3 px-6 text-center cursor-pointer transition-all duration-200 font-medium
-            ${activeTab === 'danmaku'
-              ? 'text-green-600 dark:text-green-400'
-              : 'text-gray-700 hover:text-green-600 bg-black/5 dark:bg-white/5 dark:text-gray-300 dark:hover:text-green-400 hover:bg-black/3 dark:hover:bg-white/3'
+            ${
+              activeTab === 'danmaku'
+                ? 'text-green-600 dark:text-green-400'
+                : 'text-gray-700 hover:text-green-600 bg-black/5 dark:bg-white/5 dark:text-gray-300 dark:hover:text-green-400 hover:bg-black/3 dark:hover:bg-white/3'
             }
           `.trim()}
         >
@@ -589,9 +595,10 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                       }}
                       onClick={() => handleCategoryClick(idx)}
                       className={`w-20 relative py-2 text-sm font-medium transition-colors whitespace-nowrap flex-shrink-0 text-center 
-                        ${isActive
-                          ? 'text-green-500 dark:text-green-400'
-                          : 'text-gray-700 hover:text-green-600 dark:text-gray-300 dark:hover:text-green-400'
+                        ${
+                          isActive
+                            ? 'text-green-500 dark:text-green-400'
+                            : 'text-gray-700 hover:text-green-600 dark:text-gray-300 dark:hover:text-green-400'
                         }
                       `.trim()}
                     >
@@ -643,9 +650,10 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                   key={episodeNumber}
                   onClick={() => handleEpisodeClick(episodeNumber - 1)}
                   className={`h-10 min-w-10 px-3 py-2 flex items-center justify-center text-sm font-medium rounded-md transition-all duration-200 whitespace-nowrap font-mono
-                    ${isActive
-                      ? 'bg-green-500 text-white shadow-lg shadow-green-500/25 dark:bg-green-600'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300 hover:scale-105 dark:bg-white/10 dark:text-gray-300 dark:hover:bg-white/20'
+                    ${
+                      isActive
+                        ? 'bg-green-500 text-white shadow-lg shadow-green-500/25 dark:bg-green-600'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300 hover:scale-105 dark:bg-white/10 dark:text-gray-300 dark:hover:bg-white/20'
                     }`.trim()}
                 >
                   {(() => {
@@ -730,10 +738,11 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                           !isCurrentSource && handleSourceClick(source)
                         }
                         className={`flex items-start gap-3 px-2 py-3 rounded-lg transition-all select-none duration-200 relative
-                      ${isCurrentSource
-                            ? 'bg-green-500/10 dark:bg-green-500/20 border-green-500/30 border'
-                            : 'hover:bg-gray-200/50 dark:hover:bg-white/10 hover:scale-[1.02] cursor-pointer'
-                          }`.trim()}
+                      ${
+                        isCurrentSource
+                          ? 'bg-green-500/10 dark:bg-green-500/20 border-green-500/30 border'
+                          : 'hover:bg-gray-200/50 dark:hover:bg-white/10 hover:scale-[1.02] cursor-pointer'
+                      }`.trim()}
                       >
                         {/* 封面 */}
                         <div className='flex-shrink-0 w-12 h-20 bg-gray-300 dark:bg-gray-600 rounded overflow-hidden'>
@@ -788,8 +797,8 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                                   const textColorClasses = isUltraHigh
                                     ? 'text-purple-600 dark:text-purple-400'
                                     : isHigh
-                                      ? 'text-green-600 dark:text-green-400'
-                                      : 'text-yellow-600 dark:text-yellow-400';
+                                    ? 'text-green-600 dark:text-green-400'
+                                    : 'text-yellow-600 dark:text-yellow-400';
 
                                   return (
                                     <div
@@ -881,7 +890,9 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                 <div className='text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed'>
                   {currentEpisodeLabel}
                 </div>
-                {(danmakuState?.matchName || danmakuState?.matchEpisodeTitle || danmakuState?.matchEpisodeId) && (
+                {(danmakuState?.matchName ||
+                  danmakuState?.matchEpisodeTitle ||
+                  danmakuState?.matchEpisodeId) && (
                   <div className='text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed break-words'>
                     弹幕：{getDanmakuMatchName()}
                     {getDanmakuMatchEpisodeLabel() && (
@@ -936,7 +947,9 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                 />
                 <button
                   onClick={() => onDanmakuManualSearch?.(manualDanmakuKeyword)}
-                  disabled={danmakuManualLoading || !manualDanmakuKeyword.trim()}
+                  disabled={
+                    danmakuManualLoading || !manualDanmakuKeyword.trim()
+                  }
                   className='h-10 px-3 rounded-md bg-green-500 text-white text-sm disabled:opacity-50'
                 >
                   {danmakuManualLoading ? '搜索中' : '搜索'}
@@ -981,8 +994,11 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                             {group.providerName}
                           </span>
                           <span
-                            className={`text-gray-500 dark:text-gray-400 transition-transform ${manualCandidateOpenKey === group.key ? 'rotate-90' : ''
-                              }`}
+                            className={`text-gray-500 dark:text-gray-400 transition-transform ${
+                              manualCandidateOpenKey === group.key
+                                ? 'rotate-90'
+                                : ''
+                            }`}
                           >
                             ›
                           </span>
@@ -1033,279 +1049,294 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
 
           {showLegacyDanmakuOptions && danmakuOptions && (
             <>
-          <div className='rounded-lg bg-gray-200/60 dark:bg-white/10 p-3'>
-            <button
-              onClick={() => setDanmakuSourceOpen((open) => !open)}
-              className='w-full flex items-center justify-between gap-3 text-left'
-            >
-              <div className='min-w-0'>
-                <div className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
-                  弹幕源
-                </div>
-              </div>
-              <div className='flex items-center gap-2 flex-shrink-0'>
-                <span
-                  className={`text-gray-500 dark:text-gray-400 transition-transform ${danmakuSourceOpen ? 'rotate-90' : ''
-                    }`}
+              <div className='rounded-lg bg-gray-200/60 dark:bg-white/10 p-3'>
+                <button
+                  onClick={() => setDanmakuSourceOpen((open) => !open)}
+                  className='w-full flex items-center justify-between gap-3 text-left'
                 >
-                  ›
-                </span>
-              </div>
-            </button>
-
-            {danmakuSourceOpen && (
-              <div className='mt-3 space-y-3 border-t border-gray-300/70 dark:border-white/10 pt-3'>
-                  <DanmakuTextInput
-                    label='名称'
-                    value={danmakuOptions.source.custom.name}
-                    placeholder=''
-                    onChange={(value) =>
-                      updateDanmakuOptions({
-                        source: {
-                          ...danmakuOptions.source,
-                          provider: 'custom',
-                          providerOrder: ['custom'],
-                          custom: {
-                            ...danmakuOptions.source.custom,
-                            name: value,
-                          },
-                        },
-                      })
-                    }
-                  />
-                  <DanmakuTextInput
-                    label='API 地址'
-                    value={danmakuOptions.source.custom.apiBase}
-                    placeholder=''
-                    onChange={(value) =>
-                      updateDanmakuOptions({
-                        source: {
-                          ...danmakuOptions.source,
-                          provider: 'custom',
-                          providerOrder: ['custom'],
-                          custom: {
-                            ...danmakuOptions.source.custom,
-                            apiBase: value,
-                          },
-                        },
-                      })
-                    }
-                  />
-                  <DanmakuToggle
-                    label='启用身份验证'
-                    checked={danmakuOptions.source.custom.enableAuth}
-                    onChange={(checked) =>
-                      updateDanmakuOptions({
-                        source: {
-                          ...danmakuOptions.source,
-                          provider: 'custom',
-                          providerOrder: ['custom'],
-                          custom: {
-                            ...danmakuOptions.source.custom,
-                            enableAuth: checked,
-                          },
-                        },
-                      })
-                    }
-                  />
-                  {danmakuOptions.source.custom.enableAuth && (
-                    <div className='space-y-2'>
-                      <div className='text-xs text-gray-500 dark:text-gray-400'>
-                        自定义请求头
-                      </div>
-                      {danmakuOptions.source.custom.headers.map(
-                        (header, index) => (
-                          <div
-                            key={index}
-                            className='grid grid-cols-[1fr_1fr_auto] gap-2'
-                          >
-                            <input
-                              value={header.key}
-                              placeholder='Authorization'
-                              onChange={(event) => {
-                                const headers = [
-                                  ...danmakuOptions.source.custom.headers,
-                                ];
-                                headers[index] = {
-                                  ...headers[index],
-                                  key: event.target.value,
-                                };
-                                updateDanmakuOptions({
-                                  source: {
-                                    ...danmakuOptions.source,
-                                    provider: 'custom',
-                                    providerOrder: ['custom'],
-                                    custom: {
-                                      ...danmakuOptions.source.custom,
-                                      headers,
-                                    },
-                                  },
-                                });
-                              }}
-                              className='min-w-0 rounded-md bg-white/70 dark:bg-black/20 px-2 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-green-500'
-                            />
-                            <input
-                              value={header.value}
-                              placeholder=''
-                              onChange={(event) => {
-                                const headers = [
-                                  ...danmakuOptions.source.custom.headers,
-                                ];
-                                headers[index] = {
-                                  ...headers[index],
-                                  value: event.target.value,
-                                };
-                                updateDanmakuOptions({
-                                  source: {
-                                    ...danmakuOptions.source,
-                                    provider: 'custom',
-                                    providerOrder: ['custom'],
-                                    custom: {
-                                      ...danmakuOptions.source.custom,
-                                      headers,
-                                    },
-                                  },
-                                });
-                              }}
-                              className='min-w-0 rounded-md bg-white/70 dark:bg-black/20 px-2 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-green-500'
-                            />
-                            <button
-                              onClick={() => {
-                                const headers =
-                                  danmakuOptions.source.custom.headers.filter(
-                                    (_, itemIndex) => itemIndex !== index
-                                  );
-                                updateDanmakuOptions({
-                                  source: {
-                                    ...danmakuOptions.source,
-                                    provider: 'custom',
-                                    providerOrder: ['custom'],
-                                    custom: {
-                                      ...danmakuOptions.source.custom,
-                                      headers,
-                                    },
-                                  },
-                                });
-                              }}
-                              className='w-9 rounded-md bg-white/70 text-gray-600 hover:text-red-500 dark:bg-black/20 dark:text-gray-300'
-                              aria-label='删除请求头'
-                            >
-                              -
-                            </button>
-                          </div>
-                        )
-                      )}
-                      <button
-                        onClick={() =>
-                          updateDanmakuOptions({
-                            source: {
-                              ...danmakuOptions.source,
-                              provider: 'custom',
-                              providerOrder: ['custom'],
-                              custom: {
-                                ...danmakuOptions.source.custom,
-                                headers: [
-                                  ...danmakuOptions.source.custom.headers,
-                                  { key: 'Authorization', value: '' },
-                                ],
-                              },
-                            },
-                          })
-                        }
-                        className='h-9 px-3 rounded-md border border-green-500/50 text-sm text-green-600 hover:bg-green-500/10 dark:text-green-400'
-                      >
-                        添加请求头
-                      </button>
+                  <div className='min-w-0'>
+                    <div className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+                      弹幕源
                     </div>
-                  )}
-                  <div className='flex items-center gap-3 pt-1'>
-                    <button
-                      onClick={onDanmakuSourceSave}
-                      disabled={danmakuSourceSaving}
-                      className='h-9 px-4 rounded-md bg-green-500 text-sm text-white hover:bg-green-600 disabled:opacity-60 transition-colors'
-                    >
-                      {danmakuSourceSaving ? '保存中' : '保存'}
-                    </button>
-                    {danmakuSourceMessage && (
-                      <span className='text-xs text-gray-500 dark:text-gray-400'>
-                        {danmakuSourceMessage}
-                      </span>
-                    )}
                   </div>
+                  <div className='flex items-center gap-2 flex-shrink-0'>
+                    <span
+                      className={`text-gray-500 dark:text-gray-400 transition-transform ${
+                        danmakuSourceOpen ? 'rotate-90' : ''
+                      }`}
+                    >
+                      ›
+                    </span>
+                  </div>
+                </button>
+
+                {danmakuSourceOpen && (
+                  <div className='mt-3 space-y-3 border-t border-gray-300/70 dark:border-white/10 pt-3'>
+                    <DanmakuTextInput
+                      label='名称'
+                      value={danmakuOptions.source.custom.name}
+                      placeholder=''
+                      onChange={(value) =>
+                        updateDanmakuOptions({
+                          source: {
+                            ...danmakuOptions.source,
+                            provider: 'custom',
+                            providerOrder: ['custom'],
+                            custom: {
+                              ...danmakuOptions.source.custom,
+                              name: value,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    <DanmakuTextInput
+                      label='API 地址'
+                      value={danmakuOptions.source.custom.apiBase}
+                      placeholder=''
+                      onChange={(value) =>
+                        updateDanmakuOptions({
+                          source: {
+                            ...danmakuOptions.source,
+                            provider: 'custom',
+                            providerOrder: ['custom'],
+                            custom: {
+                              ...danmakuOptions.source.custom,
+                              apiBase: value,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    <DanmakuToggle
+                      label='启用身份验证'
+                      checked={danmakuOptions.source.custom.enableAuth}
+                      onChange={(checked) =>
+                        updateDanmakuOptions({
+                          source: {
+                            ...danmakuOptions.source,
+                            provider: 'custom',
+                            providerOrder: ['custom'],
+                            custom: {
+                              ...danmakuOptions.source.custom,
+                              enableAuth: checked,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    {danmakuOptions.source.custom.enableAuth && (
+                      <div className='space-y-2'>
+                        <div className='text-xs text-gray-500 dark:text-gray-400'>
+                          自定义请求头
+                        </div>
+                        {danmakuOptions.source.custom.headers.map(
+                          (header, index) => (
+                            <div
+                              key={index}
+                              className='grid grid-cols-[1fr_1fr_auto] gap-2'
+                            >
+                              <input
+                                value={header.key}
+                                placeholder='Authorization'
+                                onChange={(event) => {
+                                  const headers = [
+                                    ...danmakuOptions.source.custom.headers,
+                                  ];
+                                  headers[index] = {
+                                    ...headers[index],
+                                    key: event.target.value,
+                                  };
+                                  updateDanmakuOptions({
+                                    source: {
+                                      ...danmakuOptions.source,
+                                      provider: 'custom',
+                                      providerOrder: ['custom'],
+                                      custom: {
+                                        ...danmakuOptions.source.custom,
+                                        headers,
+                                      },
+                                    },
+                                  });
+                                }}
+                                className='min-w-0 rounded-md bg-white/70 dark:bg-black/20 px-2 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-green-500'
+                              />
+                              <input
+                                value={header.value}
+                                placeholder=''
+                                onChange={(event) => {
+                                  const headers = [
+                                    ...danmakuOptions.source.custom.headers,
+                                  ];
+                                  headers[index] = {
+                                    ...headers[index],
+                                    value: event.target.value,
+                                  };
+                                  updateDanmakuOptions({
+                                    source: {
+                                      ...danmakuOptions.source,
+                                      provider: 'custom',
+                                      providerOrder: ['custom'],
+                                      custom: {
+                                        ...danmakuOptions.source.custom,
+                                        headers,
+                                      },
+                                    },
+                                  });
+                                }}
+                                className='min-w-0 rounded-md bg-white/70 dark:bg-black/20 px-2 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-green-500'
+                              />
+                              <button
+                                onClick={() => {
+                                  const headers =
+                                    danmakuOptions.source.custom.headers.filter(
+                                      (_, itemIndex) => itemIndex !== index
+                                    );
+                                  updateDanmakuOptions({
+                                    source: {
+                                      ...danmakuOptions.source,
+                                      provider: 'custom',
+                                      providerOrder: ['custom'],
+                                      custom: {
+                                        ...danmakuOptions.source.custom,
+                                        headers,
+                                      },
+                                    },
+                                  });
+                                }}
+                                className='w-9 rounded-md bg-white/70 text-gray-600 hover:text-red-500 dark:bg-black/20 dark:text-gray-300'
+                                aria-label='删除请求头'
+                              >
+                                -
+                              </button>
+                            </div>
+                          )
+                        )}
+                        <button
+                          onClick={() =>
+                            updateDanmakuOptions({
+                              source: {
+                                ...danmakuOptions.source,
+                                provider: 'custom',
+                                providerOrder: ['custom'],
+                                custom: {
+                                  ...danmakuOptions.source.custom,
+                                  headers: [
+                                    ...danmakuOptions.source.custom.headers,
+                                    { key: 'Authorization', value: '' },
+                                  ],
+                                },
+                              },
+                            })
+                          }
+                          className='h-9 px-3 rounded-md border border-green-500/50 text-sm text-green-600 hover:bg-green-500/10 dark:text-green-400'
+                        >
+                          添加请求头
+                        </button>
+                      </div>
+                    )}
+                    <div className='flex items-center gap-3 pt-1'>
+                      <button
+                        onClick={onDanmakuSourceSave}
+                        disabled={danmakuSourceSaving}
+                        className='h-9 px-4 rounded-md bg-green-500 text-sm text-white hover:bg-green-600 disabled:opacity-60 transition-colors'
+                      >
+                        {danmakuSourceSaving ? '保存中' : '保存'}
+                      </button>
+                      {danmakuSourceMessage && (
+                        <span className='text-xs text-gray-500 dark:text-gray-400'>
+                          {danmakuSourceMessage}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          <DanmakuSlider
-            label='不透明度'
-            value={Math.round(danmakuOptions.opacity * 100)}
-            min={10}
-            max={100}
-            suffix='%'
-            onChange={(value) => updateDanmakuOptions({ opacity: value / 100 })}
-          />
-          <DanmakuSlider
-            label='字体大小'
-            value={danmakuOptions.fontSize}
-            min={16}
-            max={40}
-            suffix='px'
-            onChange={(value) => updateDanmakuOptions({ fontSize: value })}
-          />
-          <DanmakuSlider
-            label='弹幕速度'
-            value={Math.round(danmakuOptions.speed * 100)}
-            min={50}
-            max={200}
-            suffix='%'
-            onChange={(value) => updateDanmakuOptions({ speed: value / 100 })}
-          />
-          <DanmakuSlider
-            label='显示区域'
-            value={danmakuOptions.displayArea}
-            min={25}
-            max={100}
-            suffix='%'
-            onChange={(value) => updateDanmakuOptions({ displayArea: value })}
-          />
-          <DanmakuSlider
-            label='时间偏移'
-            value={danmakuOptions.offset / 1000}
-            min={-10}
-            max={10}
-            step={0.5}
-            suffix='s'
-            onChange={(value) => updateDanmakuOptions({ offset: value * 1000 })}
-          />
-          <DanmakuSlider
-            label='最大同屏'
-            value={danmakuOptions.maxOnScreen}
-            min={50}
-            max={800}
-            step={50}
-            suffix='条'
-            onChange={(value) => updateDanmakuOptions({ maxOnScreen: value })}
-          />
+              <DanmakuSlider
+                label='不透明度'
+                value={Math.round(danmakuOptions.opacity * 100)}
+                min={10}
+                max={100}
+                suffix='%'
+                onChange={(value) =>
+                  updateDanmakuOptions({ opacity: value / 100 })
+                }
+              />
+              <DanmakuSlider
+                label='字体大小'
+                value={danmakuOptions.fontSize}
+                min={16}
+                max={40}
+                suffix='px'
+                onChange={(value) => updateDanmakuOptions({ fontSize: value })}
+              />
+              <DanmakuSlider
+                label='弹幕速度'
+                value={Math.round(danmakuOptions.speed * 100)}
+                min={50}
+                max={200}
+                suffix='%'
+                onChange={(value) =>
+                  updateDanmakuOptions({ speed: value / 100 })
+                }
+              />
+              <DanmakuSlider
+                label='显示区域'
+                value={danmakuOptions.displayArea}
+                min={25}
+                max={100}
+                suffix='%'
+                onChange={(value) =>
+                  updateDanmakuOptions({ displayArea: value })
+                }
+              />
+              <DanmakuSlider
+                label='时间偏移'
+                value={danmakuOptions.offset / 1000}
+                min={-10}
+                max={10}
+                step={0.5}
+                suffix='s'
+                onChange={(value) =>
+                  updateDanmakuOptions({ offset: value * 1000 })
+                }
+              />
+              <DanmakuSlider
+                label='最大同屏'
+                value={danmakuOptions.maxOnScreen}
+                min={50}
+                max={800}
+                step={50}
+                suffix='条'
+                onChange={(value) =>
+                  updateDanmakuOptions({ maxOnScreen: value })
+                }
+              />
 
-          <div className='space-y-2 rounded-lg bg-gray-200/60 dark:bg-white/10 p-3'>
-            <DanmakuToggle
-              label='防重'
-              checked={danmakuOptions.dedup}
-              onChange={(checked) => updateDanmakuOptions({ dedup: checked })}
-            />
-            <DanmakuToggle
-              label='屏蔽顶部弹幕'
-              checked={danmakuOptions.blockTop}
-              onChange={(checked) => updateDanmakuOptions({ blockTop: checked })}
-            />
-            <DanmakuToggle
-              label='屏蔽底部弹幕'
-              checked={danmakuOptions.blockBottom}
-              onChange={(checked) =>
-                updateDanmakuOptions({ blockBottom: checked })
-              }
-            />
-          </div>
+              <div className='space-y-2 rounded-lg bg-gray-200/60 dark:bg-white/10 p-3'>
+                <DanmakuToggle
+                  label='防重'
+                  checked={danmakuOptions.dedup}
+                  onChange={(checked) =>
+                    updateDanmakuOptions({ dedup: checked })
+                  }
+                />
+                <DanmakuToggle
+                  label='屏蔽顶部弹幕'
+                  checked={danmakuOptions.blockTop}
+                  onChange={(checked) =>
+                    updateDanmakuOptions({ blockTop: checked })
+                  }
+                />
+                <DanmakuToggle
+                  label='屏蔽底部弹幕'
+                  checked={danmakuOptions.blockBottom}
+                  onChange={(checked) =>
+                    updateDanmakuOptions({ blockBottom: checked })
+                  }
+                />
+              </div>
             </>
           )}
         </div>
@@ -1397,12 +1428,14 @@ const DanmakuToggle = ({
     >
       <span>{label}</span>
       <span
-        className={`relative h-6 w-10 overflow-hidden rounded-full transition-colors ${checked ? 'bg-green-500' : 'bg-gray-400 dark:bg-gray-600'
-          }`}
+        className={`relative h-6 w-10 overflow-hidden rounded-full transition-colors ${
+          checked ? 'bg-green-500' : 'bg-gray-400 dark:bg-gray-600'
+        }`}
       >
         <span
-          className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-all ${checked ? 'left-5' : 'left-1'
-            }`}
+          className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-all ${
+            checked ? 'left-5' : 'left-1'
+          }`}
         />
       </span>
     </button>

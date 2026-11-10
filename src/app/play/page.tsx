@@ -8,6 +8,20 @@ import { Heart } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useRef, useState } from 'react';
 
+import { LunaDanmakuController } from '@/lib/danmaku/controller';
+import { loadDanmakuMapping, saveDanmakuMapping } from '@/lib/danmaku/mapping';
+import {
+  loadLunaDanmakuOptions,
+  mergeLunaDanmakuOptions,
+  saveLunaDanmakuOptions,
+} from '@/lib/danmaku/options';
+import {
+  LunaDanmakuCommentsResponse,
+  LunaDanmakuContext,
+  LunaDanmakuOptions,
+  LunaDanmakuSearchCandidate,
+  LunaDanmakuState,
+} from '@/lib/danmaku/types';
 import {
   deleteFavorite,
   deletePlayRecord,
@@ -21,23 +35,6 @@ import {
   saveSkipConfig,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
-import { LunaDanmakuController } from '@/lib/danmaku/controller';
-import {
-  loadLunaDanmakuOptions,
-  mergeLunaDanmakuOptions,
-  saveLunaDanmakuOptions,
-} from '@/lib/danmaku/options';
-import {
-  loadDanmakuMapping,
-  saveDanmakuMapping,
-} from '@/lib/danmaku/mapping';
-import {
-  LunaDanmakuCommentsResponse,
-  LunaDanmakuContext,
-  LunaDanmakuSearchCandidate,
-  LunaDanmakuOptions,
-  LunaDanmakuState,
-} from '@/lib/danmaku/types';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 
@@ -212,8 +209,9 @@ function PlayPageClient() {
   const [videoLoadingStage, setVideoLoadingStage] = useState<
     'initing' | 'sourceChanging'
   >('initing');
-  const [danmakuOptions, setDanmakuOptions] =
-    useState<LunaDanmakuOptions>(loadLunaDanmakuOptions);
+  const [danmakuOptions, setDanmakuOptions] = useState<LunaDanmakuOptions>(
+    loadLunaDanmakuOptions
+  );
   const danmakuOptionsRef = useRef(danmakuOptions);
   const [danmakuState, setDanmakuState] = useState<LunaDanmakuState>({
     status: 'idle',
@@ -260,8 +258,8 @@ function PlayPageClient() {
   ): Promise<SearchResult> => {
     if (sources.length === 1) return sources[0];
 
-    // 将播放源均分为两批，并发测速各批，避免一次性过多请求
-    const batchSize = Math.ceil(sources.length / 2);
+    // 限制同时创建的临时视频播放器，避免源越多解码负载越高。
+    const batchSize = 2;
     const allResults: Array<{
       source: SearchResult;
       testResult: { quality: string; loadSpeed: string; pingTime: number };
@@ -497,8 +495,9 @@ function PlayPageClient() {
         | undefined;
       const fullscreenElement = getFullscreenElement();
       const isNativeFullscreen = fullscreenElement === artRef.current;
-      const isWebFullscreen =
-        !!artRef.current?.classList.contains('luna-art-web-fullscreen');
+      const isWebFullscreen = !!artRef.current?.classList.contains(
+        'luna-art-web-fullscreen'
+      );
       artRef.current?.style.setProperty(
         '--luna-web-fullscreen-height',
         `${webFullscreenHeight}px`
@@ -622,7 +621,10 @@ function PlayPageClient() {
       }
       webFullscreenPlaceholderRef.current = null;
       if (webFullscreenStyleRef.current) {
-        container.setAttribute('style', webFullscreenStyleRef.current.container);
+        container.setAttribute(
+          'style',
+          webFullscreenStyleRef.current.container
+        );
         if (player) {
           player.setAttribute('style', webFullscreenStyleRef.current.player);
         }
@@ -632,7 +634,10 @@ function PlayPageClient() {
     }
 
     document.body.classList.toggle('luna-art-fullscreen-lock', enabled);
-    document.documentElement.classList.toggle('luna-art-fullscreen-lock', enabled);
+    document.documentElement.classList.toggle(
+      'luna-art-fullscreen-lock',
+      enabled
+    );
     syncDanmakuViewport();
     window.setTimeout(syncDanmakuViewport, 350);
   };
@@ -750,7 +755,8 @@ function PlayPageClient() {
 
     try {
       const manualMapping = loadDanmakuMapping(context);
-      let candidate: LunaDanmakuSearchCandidate | undefined = manualMapping || undefined;
+      let candidate: LunaDanmakuSearchCandidate | undefined =
+        manualMapping || undefined;
       let requestSource = danmakuOptionsRef.current.source;
       if (manualMapping?.source) {
         requestSource = manualMapping.source;
@@ -758,12 +764,12 @@ function PlayPageClient() {
 
       if (!candidate) {
         const searchResponse = await fetch('/api/danmaku/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          context,
-          source: danmakuOptionsRef.current.source,
-        }),
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            context,
+            source: danmakuOptionsRef.current.source,
+          }),
         });
         if (!searchResponse.ok) {
           throw new Error('弹幕匹配失败');
@@ -780,7 +786,8 @@ function PlayPageClient() {
           count: 0,
           currentEpisodeNumber: context.episodeIndex + 1,
           currentEpisodeTitle: context.episodeTitle,
-          message: '当前第三方接口没有匹配到候选，可检查接口配置或手动选择弹幕。',
+          message:
+            '当前第三方接口没有匹配到候选，可检查接口配置或手动选择弹幕。',
         });
         return;
       }
@@ -933,7 +940,6 @@ function PlayPageClient() {
         // 销毁 ArtPlayer 实例
         artPlayerRef.current.destroy();
         artPlayerRef.current = null;
-
       } catch (err) {
         void err;
         artPlayerRef.current = null;
@@ -1135,13 +1141,13 @@ function PlayPageClient() {
         const results = data.results.filter(
           (result: SearchResult) =>
             result.title.replaceAll(' ', '').toLowerCase() ===
-            videoTitleRef.current.replaceAll(' ', '').toLowerCase() &&
+              videoTitleRef.current.replaceAll(' ', '').toLowerCase() &&
             (videoYearRef.current
               ? result.year.toLowerCase() === videoYearRef.current.toLowerCase()
               : true) &&
             (searchType
               ? (searchType === 'tv' && result.episodes.length > 1) ||
-              (searchType === 'movie' && result.episodes.length === 1)
+                (searchType === 'movie' && result.episodes.length === 1)
               : true)
         );
         setAvailableSources(results);
@@ -1692,16 +1698,12 @@ function PlayPageClient() {
     const isWebkit =
       typeof window !== 'undefined' &&
       typeof (window as any).webkitConvertPointFromNodeToPage === 'function';
-    const isIOSLike =
-      typeof navigator !== 'undefined' &&
-      (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
-        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
-
     // 非WebKit浏览器且播放器已存在，使用switch方法切换
     if (!isWebkit && artPlayerRef.current) {
       artPlayerRef.current.switch = videoUrl;
-      artPlayerRef.current.title = `${videoTitle} - 第${currentEpisodeIndex + 1
-        }集`;
+      artPlayerRef.current.title = `${videoTitle} - 第${
+        currentEpisodeIndex + 1
+      }集`;
       artPlayerRef.current.poster = videoCover;
       if (artPlayerRef.current?.video) {
         ensureVideoSource(
@@ -1813,11 +1815,22 @@ function PlayPageClient() {
 
             if (video.hls) {
               video.hls.destroy();
+              delete video.hls;
+            }
+
+            // 原生 HLS 可省去 JS 拆包和重封装；清单过滤仍需要自定义 loader。
+            if (
+              !blockAdEnabledRef.current &&
+              video.canPlayType('application/vnd.apple.mpegurl')
+            ) {
+              video.src = url;
+              ensureVideoSource(video, url);
+              return;
             }
             const hls = new Hls({
               debug: false, // 关闭日志
-              enableWorker: true, // WebWorker 解码，降低主线程压力
-              lowLatencyMode: true, // 开启低延迟 LL-HLS
+              enableWorker: true, // Worker 负责拆包和重封装，音视频解码由浏览器负责
+              lowLatencyMode: false, // 点播无需低延迟直播模式
 
               /* 缓冲/内存相关 */
               maxBufferLength: 30, // 前向缓冲最大 30s，过大容易导致高延迟
@@ -2049,7 +2062,11 @@ function PlayPageClient() {
 
             const current = danmakuOptionsRef.current;
             const patch: Partial<LunaDanmakuOptions> = {};
-            if (name === 'enabled' || name === 'blockTop' || name === 'blockBottom') {
+            if (
+              name === 'enabled' ||
+              name === 'blockTop' ||
+              name === 'blockBottom'
+            ) {
               patch[name] = input.checked;
             } else if (name === 'opacity' || name === 'speed') {
               patch[name] = Number(input.value) / 100;
@@ -2170,7 +2187,7 @@ function PlayPageClient() {
           skipConfigRef.current.outro_time < 0 &&
           duration > 0 &&
           currentTime >
-          artPlayerRef.current.duration + skipConfigRef.current.outro_time
+            artPlayerRef.current.duration + skipConfigRef.current.outro_time
         ) {
           if (
             currentEpisodeIndexRef.current <
@@ -2364,27 +2381,30 @@ function PlayPageClient() {
             <div className='mb-6 w-80 mx-auto'>
               <div className='flex justify-center space-x-2 mb-4'>
                 <div
-                  className={`w-3 h-3 rounded-full transition-all duration-500 ${loadingStage === 'searching' || loadingStage === 'fetching'
-                    ? 'bg-green-500 scale-125'
-                    : loadingStage === 'preferring' ||
-                      loadingStage === 'ready'
+                  className={`w-3 h-3 rounded-full transition-all duration-500 ${
+                    loadingStage === 'searching' || loadingStage === 'fetching'
+                      ? 'bg-green-500 scale-125'
+                      : loadingStage === 'preferring' ||
+                        loadingStage === 'ready'
                       ? 'bg-green-500'
                       : 'bg-gray-300'
-                    }`}
+                  }`}
                 ></div>
                 <div
-                  className={`w-3 h-3 rounded-full transition-all duration-500 ${loadingStage === 'preferring'
-                    ? 'bg-green-500 scale-125'
-                    : loadingStage === 'ready'
+                  className={`w-3 h-3 rounded-full transition-all duration-500 ${
+                    loadingStage === 'preferring'
+                      ? 'bg-green-500 scale-125'
+                      : loadingStage === 'ready'
                       ? 'bg-green-500'
                       : 'bg-gray-300'
-                    }`}
+                  }`}
                 ></div>
                 <div
-                  className={`w-3 h-3 rounded-full transition-all duration-500 ${loadingStage === 'ready'
-                    ? 'bg-green-500 scale-125'
-                    : 'bg-gray-300'
-                    }`}
+                  className={`w-3 h-3 rounded-full transition-all duration-500 ${
+                    loadingStage === 'ready'
+                      ? 'bg-green-500 scale-125'
+                      : 'bg-gray-300'
+                  }`}
                 ></div>
               </div>
 
@@ -2395,11 +2415,11 @@ function PlayPageClient() {
                   style={{
                     width:
                       loadingStage === 'searching' ||
-                        loadingStage === 'fetching'
+                      loadingStage === 'fetching'
                         ? '33%'
                         : loadingStage === 'preferring'
-                          ? '66%'
-                          : '100%',
+                        ? '66%'
+                        : '100%',
                   }}
                 ></div>
               </div>
@@ -2494,7 +2514,10 @@ function PlayPageClient() {
             {videoTitle || '影片标题'}
             {totalEpisodes > 1 && (
               <span className='text-gray-500 dark:text-gray-400'>
-                {` > ${detail?.episodes_titles?.[currentEpisodeIndex] || `第 ${currentEpisodeIndex + 1} 集`}`}
+                {` > ${
+                  detail?.episodes_titles?.[currentEpisodeIndex] ||
+                  `第 ${currentEpisodeIndex + 1} 集`
+                }`}
               </span>
             )}
           </h1>
@@ -2513,8 +2536,9 @@ function PlayPageClient() {
               }
             >
               <svg
-                className={`w-3.5 h-3.5 text-gray-500 dark:text-gray-400 transition-transform duration-200 ${isEpisodeSelectorCollapsed ? 'rotate-180' : 'rotate-0'
-                  }`}
+                className={`w-3.5 h-3.5 text-gray-500 dark:text-gray-400 transition-transform duration-200 ${
+                  isEpisodeSelectorCollapsed ? 'rotate-180' : 'rotate-0'
+                }`}
                 fill='none'
                 stroke='currentColor'
                 viewBox='0 0 24 24'
@@ -2532,24 +2556,27 @@ function PlayPageClient() {
 
               {/* 精致的状态指示点 */}
               <div
-                className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full transition-all duration-200 ${isEpisodeSelectorCollapsed
-                  ? 'bg-orange-400 animate-pulse'
-                  : 'bg-green-400'
-                  }`}
+                className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full transition-all duration-200 ${
+                  isEpisodeSelectorCollapsed
+                    ? 'bg-orange-400 animate-pulse'
+                    : 'bg-green-400'
+                }`}
               ></div>
             </button>
           </div>
 
           <div
-            className={`grid gap-4 lg:h-[500px] xl:h-[650px] 2xl:h-[750px] transition-all duration-300 ease-in-out ${isEpisodeSelectorCollapsed
-              ? 'grid-cols-1'
-              : 'grid-cols-1 md:grid-cols-4'
-              }`}
+            className={`grid gap-4 lg:h-[500px] xl:h-[650px] 2xl:h-[750px] transition-all duration-300 ease-in-out ${
+              isEpisodeSelectorCollapsed
+                ? 'grid-cols-1'
+                : 'grid-cols-1 md:grid-cols-4'
+            }`}
           >
             {/* 播放器 */}
             <div
-              className={`h-full transition-all duration-300 ease-in-out rounded-xl border border-white/0 dark:border-white/30 ${isEpisodeSelectorCollapsed ? 'col-span-1' : 'md:col-span-3'
-                }`}
+              className={`h-full transition-all duration-300 ease-in-out rounded-xl border border-white/0 dark:border-white/30 ${
+                isEpisodeSelectorCollapsed ? 'col-span-1' : 'md:col-span-3'
+              }`}
             >
               <div className='relative w-full h-[300px] lg:h-full'>
                 <div
@@ -2599,10 +2626,11 @@ function PlayPageClient() {
 
             {/* 选集和换源 - 在移动端始终显示，在 lg 及以上可折叠 */}
             <div
-              className={`h-[300px] lg:h-full md:overflow-hidden transition-all duration-300 ease-in-out ${isEpisodeSelectorCollapsed
-                ? 'md:col-span-1 lg:hidden lg:opacity-0 lg:scale-95'
-                : 'md:col-span-1 lg:opacity-100 lg:scale-100'
-                }`}
+              className={`h-[300px] lg:h-full md:overflow-hidden transition-all duration-300 ease-in-out ${
+                isEpisodeSelectorCollapsed
+                  ? 'md:col-span-1 lg:hidden lg:opacity-0 lg:scale-95'
+                  : 'md:col-span-1 lg:opacity-100 lg:scale-100'
+              }`}
             >
               <EpisodeSelector
                 totalEpisodes={totalEpisodes}
